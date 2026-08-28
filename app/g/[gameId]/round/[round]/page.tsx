@@ -79,7 +79,15 @@ export default async function RoundPage({ params, searchParams }: Props) {
             {pairLabel(record.meta, nsPair)} <span className="muted">vs</span>{" "}
             {pairLabel(record.meta, ewPair)}
           </h2>
+          {/*
+            Keying on the segment remounts the form when the pairs change.
+            Without it React reuses the instance, so the previous segment's
+            typed rows, taken-over boards and save message all carry over -
+            and a board unlocked by "enter it myself" would stay unlocked
+            against a different table.
+          */}
           <SegmentForm
+            key={`${round}|${nsPair}|${ewPair}`}
             gameId={gameId}
             round={round}
             meta={record.meta}

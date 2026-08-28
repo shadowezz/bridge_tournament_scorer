@@ -366,6 +366,7 @@ trapped inside server actions.
 | Close round, scoresheets | Matches `example_scoresheet.png` column for column |
 | Edit a closed round | IMPs 19–7 → 7–11, VP 13.24 → 8.92, standings reordered |
 | Board typo | Both segments named, boards 5 and 16 excluded, banner clears on fix |
+| Changing pairs resets the form | Rows, unsaved text, taken-over boards and save message all clear; masked state recomputed for the new segment |
 | Perspective toggle, clean production build | Caption, block headers, IMP columns, VP and every board mirror; each matchup toggles independently |
 | Bad/unknown/lowercase game id | 404 |
 | `bt_cid` issued on first contact | Yes |
@@ -386,8 +387,20 @@ data — `-0` from negating a drawn board survived in memory but became `0`
 through JSON, so a freshly computed round did not deep-equal the same round
 reloaded.
 
+**Stale form state survived a change of pairs.** `SegmentForm` seeds its rows
+from props in a `useState` initializer, which only runs on mount. Changing the
+dropdowns re-rendered the server component with new seeds, but React reused the
+instance, so the previous segment's typed rows, taken-over boards and save
+message all carried over. The visible symptom was the least harmful part: a
+board unlocked by *enter it myself* stayed unlocked against a different table,
+where it could overwrite another client's entry with no explicit take-over.
+
+Fixed by keying the form on `round|nsPair|ewPair` so React remounts it when the
+segment changes, which resets all three pieces of state at once.
+
 *Lesson applied:* verifying a page by reading its HTML does not verify that the
-page works. Interactive elements have to be clicked.
+page works. Interactive elements have to be clicked — all three of these bugs
+were invisible to the unit tests and to HTTP-level checks.
 
 
 
