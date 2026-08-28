@@ -6,6 +6,7 @@ import {
   type GameMeta,
   type PairId,
   type TeamId,
+  negate,
 } from "@/lib/types";
 import { signedImps } from "@/lib/bridge/imps";
 import { victoryPoints } from "@/lib/bridge/vp";
@@ -96,7 +97,7 @@ function scoreMatchup(matchup: ReturnType<typeof groupMatchups>[number]): Matchu
     // The home team sits NS in one orientation and EW in the other, so its
     // score in the second is the negation of that table's NS score.
     const nsScore = homeEntry.nsScore;
-    const ewScore = -awayEntry.nsScore;
+    const ewScore = negate(awayEntry.nsScore);
     const difference = nsScore + ewScore;
 
     boards.push({

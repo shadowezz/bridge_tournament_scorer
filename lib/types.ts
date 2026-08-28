@@ -91,3 +91,20 @@ export function pairShortLabel(meta: GameMeta, pairId: PairId): string {
 export function teamName(meta: GameMeta, teamId: TeamId): string {
   return meta.teams.find((t) => t.id === teamId)?.name ?? teamId;
 }
+
+/** Just the two player names, e.g. "Wj / Luke". */
+export function pairPlayers(meta: GameMeta, pairId: PairId): string {
+  const pair = meta.pairs.find((p) => p.id === pairId);
+  return pair ? pair.players.join(" / ") : pairId;
+}
+
+/**
+ * Negate a score without producing -0.
+ *
+ * Passed-out and flat boards score zero, and `-0` would otherwise reach stored
+ * results - where it survives in memory but becomes `0` through JSON, so a
+ * freshly computed round would not deep-equal the same round reloaded.
+ */
+export function negate(value: number): number {
+  return value === 0 ? 0 : -value;
+}

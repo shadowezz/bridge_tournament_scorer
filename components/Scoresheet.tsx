@@ -1,6 +1,6 @@
 import { formatContract, tricksTaken } from "@/lib/bridge/contract";
 import type { MatchupResult } from "@/lib/tournament/compute";
-import { type GameMeta, pairLabel } from "@/lib/types";
+import { type GameMeta, pairPlayers, teamName } from "@/lib/types";
 
 /** Positive numbers only in the +/- columns; blank when the side did not score. */
 function split(score: number): { plus: string; minus: string } {
@@ -24,13 +24,26 @@ function bid(contract: Parameters<typeof formatContract>[0]): { label: string; b
   };
 }
 
+/** Column-block heading: one of our pairs, where they sat, and who they faced. */
+function BlockHeader({ ours, seat, against }: { ours: string; seat: string; against: string }) {
+  return (
+    <>
+      <div>
+        {ours} <span style={{ fontWeight: 400, opacity: 0.7 }}>({seat})</span>
+      </div>
+      <div style={{ fontWeight: 400, opacity: 0.7 }}>vs {against}</div>
+    </>
+  );
+}
+
 /**
- * One matchup from the home team's point of view: its NS pair on the left,
- * its EW pair on the right, and the IMP swing between them.
+ * A team match is scored by comparing a team's OWN two pairs, one at each
+ * table, so both column blocks belong to the home team. Each block therefore
+ * names the opponent that pair faced, otherwise the sheet reads as though a
+ * team were playing itself.
  */
 export function Scoresheet({ matchup, meta }: { matchup: MatchupResult; meta: GameMeta }) {
-  const nsHeader = pairLabel(meta, matchup.homeNsPair);
-  const ewHeader = pairLabel(meta, matchup.homeEwPair);
+  const [homeTeam, awayTeam] = matchup.teams;
 
   return (
     <div className="scroll-x">
@@ -39,13 +52,21 @@ export function Scoresheet({ matchup, meta }: { matchup: MatchupResult; meta: Ga
           <tr>
             <th />
             <th colSpan={5} style={{ background: "var(--ns)", textAlign: "center" }}>
-              {nsHeader}
+              <BlockHeader
+                ours={pairPlayers(meta, matchup.homeNsPair)}
+                seat="N–S"
+                against={pairPlayers(meta, matchup.awayEwPair)}
+              />
             </th>
             <th colSpan={5} style={{ background: "var(--ew)", textAlign: "center" }}>
-              {ewHeader}
+              <BlockHeader
+                ours={pairPlayers(meta, matchup.homeEwPair)}
+                seat="E–W"
+                against={pairPlayers(meta, matchup.awayNsPair)}
+              />
             </th>
             <th colSpan={2} style={{ background: "var(--imp)", textAlign: "center" }}>
-              IMPs
+              IMPs to
             </th>
           </tr>
           <tr>
@@ -60,8 +81,8 @@ export function Scoresheet({ matchup, meta }: { matchup: MatchupResult; meta: Ga
             <th>Result</th>
             <th>EW+</th>
             <th>EW−</th>
-            <th>+</th>
-            <th>−</th>
+            <th>{teamName(meta, homeTeam)}</th>
+            <th>{teamName(meta, awayTeam)}</th>
           </tr>
         </thead>
 

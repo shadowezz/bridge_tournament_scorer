@@ -4,8 +4,9 @@ import { connection } from "next/server";
 import { store } from "@/lib/store";
 import { clientId } from "@/lib/session";
 import { visibleRound } from "@/lib/visibility";
-import { ROUNDS, teamName } from "@/lib/types";
-import { Scoresheet } from "@/components/Scoresheet";
+import { ROUNDS } from "@/lib/types";
+import { MatchupCard } from "@/components/MatchupCard";
+import { LocalTime } from "@/components/LocalTime";
 import { ValidationBanner } from "@/components/ValidationBanner";
 import { RefreshButton } from "@/components/RefreshButton";
 
@@ -47,39 +48,9 @@ export default async function ResultsPage({ params }: Props) {
       <ValidationBanner issues={result.validation} />
 
       <div className="stack" style={{ gap: "2rem" }}>
-        {result.matchups.map((matchup) => {
-          const home = teamName(record.meta, matchup.teams[0]);
-          const away = teamName(record.meta, matchup.teams[1]);
-
-          return (
-            <section key={matchup.key}>
-              <div className="spread">
-                <h3 style={{ margin: 0, fontSize: "1.05rem" }}>
-                  {home} vs {away}
-                </h3>
-                <div className="row">
-                  <span className="badge">
-                    {matchup.impsHome} – {matchup.impsAway} IMPs
-                  </span>
-                  <span className="badge">
-                    {matchup.vpHome.toFixed(2)} – {matchup.vpAway.toFixed(2)} VP
-                  </span>
-                </div>
-              </div>
-
-              {matchup.excludedBoards.length > 0 && (
-                <p className="notice error" style={{ margin: ".5rem 0" }}>
-                  Board {matchup.excludedBoards.join(", ")} could not be matched across both
-                  tables and is excluded from these IMPs.
-                </p>
-              )}
-
-              <div style={{ marginTop: ".5rem" }}>
-                <Scoresheet matchup={matchup} meta={record.meta} />
-              </div>
-            </section>
-          );
-        })}
+        {result.matchups.map((matchup) => (
+          <MatchupCard key={matchup.key} matchup={matchup} meta={record.meta} />
+        ))}
       </div>
 
       <h2>Round {round} victory points</h2>
@@ -105,7 +76,7 @@ export default async function ResultsPage({ params }: Props) {
       </div>
 
       <p className="muted" style={{ marginTop: "1rem" }}>
-        Scored {new Date(result.computedAt).toLocaleString()}.{" "}
+        Scored <LocalTime iso={result.computedAt} />.{" "}
         <Link href={`/g/${gameId}/round/${round}`}>Correct an entry</Link> if something looks wrong.
       </p>
     </>

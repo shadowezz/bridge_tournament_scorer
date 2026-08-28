@@ -4,7 +4,7 @@ Final design record for the app built from [`plan.md`](./plan.md). That file is 
 original brief and is left untouched; this one records what was decided, why, what
 changed during the build, and how it was verified.
 
-Status: **built and verified.** ~3,700 lines, 110 unit tests, clean typecheck and
+Status: **built and verified.** ~3,900 lines, 117 unit tests, clean typecheck and
 production build.
 
 ---
@@ -69,7 +69,10 @@ Each pair belongs to a team, fixed at game creation. That single fact is enough:
   `ewScore` is the negation of the other table's NS score. Then
   `imps = impTable(|difference|) · sign(difference)`.
 - **Scoresheet** — maps 1:1 onto `example_scoresheet.png`: left block is the home team's
-  NS pair, right block its EW pair, IMP ± on the right.
+  NS pair, right block its EW pair, IMP ± on the right. Because a team match is
+  scored by comparing a team's *own* two pairs, both blocks belong to one team;
+  each block therefore names the opponent that pair faced, and a per-matchup
+  toggle retells the same result from the other team's side.
 
 No tables, halves or seating rotation appear anywhere in the model.
 
@@ -229,6 +232,24 @@ Dropping below a full card deletes the stored result rather than leaving it stal
 
 ---
 
+## Perspective toggle
+
+A result is stored once, from the home team's side, but both tables are already
+in it — so the away team's sheet is a pure rearrangement, not a second
+computation. `flipMatchup` swaps the two orientations, moves each table across
+and negates every figure. No refetch, and no second copy of the scores that
+could drift out of step with what was scored.
+
+It lives in `lib/tournament/perspective.ts` rather than `compute.ts` because a
+client component must be able to import it, and `compute.ts` pulls
+`node:crypto` for the digest. The import of `MatchupResult` there is
+deliberately `import type`, which is erased at compile time.
+
+`flipMatchup` is its own inverse, which is the property the tests pin down:
+toggling back and forth can never drift.
+
+---
+
 ## Storage
 
 ```
@@ -304,7 +325,10 @@ share it without pulling in each other's imports.
 **3. `outputFileTracingRoot` pinned** in `next.config.ts`. Without it Next walks
 up to the nearest lockfile, which on a dev machine can be the home directory.
 
-**4. Two extra pure modules** — `lib/forms.ts` and `lib/tournament/setup.ts` —
+**4. `LocalTime` client component** for the "Scored at" timestamp — see the
+hydration bug below.
+
+**5. Two extra pure modules** — `lib/forms.ts` and `lib/tournament/setup.ts` —
 extracted so form-row semantics and game creation are unit-testable rather than
 trapped inside server actions.
 
@@ -342,10 +366,30 @@ trapped inside server actions.
 | Close round, scoresheets | Matches `example_scoresheet.png` column for column |
 | Edit a closed round | IMPs 19–7 → 7–11, VP 13.24 → 8.92, standings reordered |
 | Board typo | Both segments named, boards 5 and 16 excluded, banner clears on fix |
+| Perspective toggle, clean production build | Caption, block headers, IMP columns, VP and every board mirror; each matchup toggles independently |
 | Bad/unknown/lowercase game id | 404 |
 | `bt_cid` issued on first contact | Yes |
 
-### Bug found by the browser that the other layers missed
+### Bugs found by the browser that the other layers missed
+
+**Hydration failure killed all interactivity on the results page.**
+`new Date(result.computedAt).toLocaleString()` resolved differently on the two
+sides — Node chose `en-SG` (`6:22:11 pm`), the browser `en-GB` (`18:22:11`), on
+the same machine. React discarded hydration, so every button on that page was
+inert, including Refresh. It went unnoticed because the earlier end-to-end pass
+only *read* content from the results page and never clicked anything there.
+
+Fixed with `components/LocalTime.tsx`: first render is a deterministic UTC
+string both sides agree on, upgraded to local formatting in an effect after
+mount. `negate()` in `lib/types.ts` addresses the same class of problem for
+data — `-0` from negating a drawn board survived in memory but became `0`
+through JSON, so a freshly computed round did not deep-equal the same round
+reloaded.
+
+*Lesson applied:* verifying a page by reading its HTML does not verify that the
+page works. Interactive elements have to be clicked.
+
+
 
 Disabled inputs are not submitted. Masked rows were posting a board number with
 **no** contract, so the server rejected the whole save as "Contract required" —
