@@ -20,7 +20,7 @@ Take note that the results of each round should not be visible to other particip
 ## Viewing results
 After all the results for the round has come in, the system can compute the scores of each head to head matchup (i.e. Team A vs Team B, Team A vs Team C and Team B vs Team C) using standard IMP conversion, subsequently from IMP differential to VP using 6-board VP scoring.
 
-For each matchup, there is a results summary with the IMPs and VPs as well as a detailed scoresheet that looks like ![scoresheet](./scoresheet.png)
+For each matchup, there is a results summary with the IMPs and VPs as well as a detailed scoresheet that looks like ![scoresheet](./example_scoresheet.png)
 
 There should also be a live ranking of the teams with their current VP score.
 
