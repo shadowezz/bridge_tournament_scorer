@@ -1,0 +1,137 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e2e0da;
+  --text: #1b1a17;
+  --muted: #6b6862;
+  --accent: #2f5d50;
+  --accent-soft: #e6efeb;
+  --ns: #dceaf5;
+  --ew: #f8dce8;
+  --imp: #fcf3d8;
+  --danger: #a3341f;
+  --danger-soft: #fbeae6;
+  --warn: #8a6516;
+  --warn-soft: #fbf3e0;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --surface: #1e2024;
+    --border: #32353b;
+    --text: #eceae5;
+    --muted: #9a978f;
+    --accent: #7fb8a5;
+    --accent-soft: #23302c;
+    --ns: #1c2c39;
+    --ew: #35202a;
+    --imp: #322c1a;
+    --danger: #e8907c;
+    --danger-soft: #341f1b;
+    --warn: #d8b263;
+    --warn-soft: #2e2718;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+main { max-width: 60rem; margin: 0 auto; padding: 1.25rem 1rem 4rem; }
+
+h1 { font-size: 1.45rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+h2 { font-size: 1.1rem; margin: 2rem 0 .75rem; }
+h3 { font-size: .95rem; margin: 0 0 .5rem; }
+p { margin: .4rem 0; }
+a { color: var(--accent); }
+
+.muted { color: var(--muted); font-size: .875rem; }
+.sub { color: var(--muted); font-size: .9rem; margin-bottom: 1.5rem; }
+.row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.spread { display: flex; gap: .75rem; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+.stack { display: grid; gap: .75rem; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+
+input, select, button {
+  font: inherit;
+  color: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: .55rem .7rem;
+}
+input, select { width: 100%; }
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+  font-weight: 600;
+  padding: .55rem 1rem;
+  width: auto;
+}
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.ghost { background: transparent; color: var(--accent); border-color: var(--border); font-weight: 500; }
+button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 500; text-decoration: underline; }
+
+.grid-3 { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+.grid-2 { display: grid; gap: .75rem; grid-template-columns: 1fr 1fr; }
+
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+table { border-collapse: collapse; width: 100%; font-size: .875rem; }
+th, td { padding: .4rem .5rem; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th { font-size: .75rem; color: var(--muted); font-weight: 600; }
+tfoot td { font-weight: 700; border-bottom: none; }
+
+.badge {
+  display: inline-block;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  font-size: .75rem;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge.open { background: var(--warn-soft); color: var(--warn); }
+.badge.empty { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+
+.notice { border-radius: var(--radius); padding: .75rem 1rem; font-size: .875rem; border: 1px solid; }
+.notice.error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.notice.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.notice.info { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+.nav { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+.nav a {
+  padding: .35rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: .875rem;
+  background: var(--surface);
+}
+.nav a[aria-current="page"] { background: var(--accent); color: #fff; border-color: transparent; }
+
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
