@@ -2,9 +2,20 @@ import type { Backend } from "@/lib/store/backend";
 import { fsBackend } from "@/lib/store/fs";
 import { redisBackend } from "@/lib/store/redis";
 import { nsScore } from "@/lib/bridge/score";
-import { computeRound, digestEntries, isRoundComplete, type RoundResult } from "@/lib/tournament/compute";
+import {
+  computeRound,
+  digestEntries,
+  isRoundComplete,
+  type RoundResult,
+} from "@/lib/tournament/compute";
 import { validateSegmentPairing } from "@/lib/tournament/validate";
-import { ROUNDS, type Contract, type Entry, type GameMeta, type PairId } from "@/lib/types";
+import {
+  ROUNDS,
+  type Contract,
+  type Entry,
+  type GameMeta,
+  type PairId,
+} from "@/lib/types";
 
 export interface GameRecord {
   meta: GameMeta;
@@ -26,8 +37,12 @@ export interface WriteOutcome {
 
 const gameKey = (gameId: string) => `g:${gameId}`;
 const resultField = (round: number) => `r${round}|result`;
-const entryField = (round: number, nsPair: PairId, ewPair: PairId, board: number) =>
-  `r${round}|${nsPair}|${ewPair}|${board}`;
+const entryField = (
+  round: number,
+  nsPair: PairId,
+  ewPair: PairId,
+  board: number,
+) => `r${round}|${nsPair}|${ewPair}|${board}`;
 
 interface StoredEntry {
   contract: Contract;
@@ -69,10 +84,16 @@ export function createStore(backend: Backend = defaultBackend()) {
    * change triggered it. Every mutation funnels through here, so no code
    * path can change an entry without its victory points following.
    */
-  function resultFieldsFor(round: number, entries: Entry[], meta: GameMeta): Record<string, string> {
+  function resultFieldsFor(
+    round: number,
+    entries: Entry[],
+    meta: GameMeta,
+  ): Record<string, string> {
     const forRound = entries.filter((e) => e.round === round);
     if (!isRoundComplete(forRound)) return {};
-    return { [resultField(round)]: JSON.stringify(computeRound(round, forRound, meta)) };
+    return {
+      [resultField(round)]: JSON.stringify(computeRound(round, forRound, meta)),
+    };
   }
 
   async function readRecord(gameId: string): Promise<GameRecord | null> {
@@ -173,7 +194,10 @@ export function createStore(backend: Backend = defaultBackend()) {
     const takeOver = new Set(input.takeOver ?? []);
     const owned = new Map(
       record.entries
-        .filter((e) => e.round === round && e.nsPair === nsPair && e.ewPair === ewPair)
+        .filter(
+          (e) =>
+            e.round === round && e.nsPair === nsPair && e.ewPair === ewPair,
+        )
         .map((e) => [e.board, e]),
     );
 
@@ -184,7 +208,11 @@ export function createStore(backend: Backend = defaultBackend()) {
 
     for (const row of rows) {
       const existing = owned.get(row.board);
-      if (existing && existing.clientId !== clientId && !takeOver.has(row.board)) {
+      if (
+        existing &&
+        existing.clientId !== clientId &&
+        !takeOver.has(row.board)
+      ) {
         conflicts.push(row.board);
         continue;
       }
@@ -200,10 +228,15 @@ export function createStore(backend: Backend = defaultBackend()) {
         clientId,
       };
 
-      updates[entryField(round, nsPair, ewPair, row.board)] = encodeEntry(entry);
+      updates[entryField(round, nsPair, ewPair, row.board)] =
+        encodeEntry(entry);
 
       const index = nextEntries.findIndex(
-        (e) => e.round === round && e.nsPair === nsPair && e.ewPair === ewPair && e.board === row.board,
+        (e) =>
+          e.round === round &&
+          e.nsPair === nsPair &&
+          e.ewPair === ewPair &&
+          e.board === row.board,
       );
       if (index >= 0) nextEntries[index] = entry;
       else nextEntries.push(entry);
@@ -221,7 +254,13 @@ export function createStore(backend: Backend = defaultBackend()) {
   /** Delete boards from a segment. Only the owning client may remove an entry. */
   async function deleteEntries(
     gameId: string,
-    input: { round: number; nsPair: PairId; ewPair: PairId; boards: number[]; clientId: string },
+    input: {
+      round: number;
+      nsPair: PairId;
+      ewPair: PairId;
+      boards: number[];
+      clientId: string;
+    },
   ): Promise<GameRecord> {
     const { round, nsPair, ewPair, boards, clientId } = input;
 
@@ -238,14 +277,18 @@ export function createStore(backend: Backend = defaultBackend()) {
     );
 
     if (removable.length > 0) {
-      const remove = removable.map((e) => entryField(round, nsPair, ewPair, e.board));
+      const remove = removable.map((e) =>
+        entryField(round, nsPair, ewPair, e.board),
+      );
       const removed = new Set(remove);
       const nextEntries = record.entries.filter(
         (e) => !removed.has(entryField(e.round, e.nsPair, e.ewPair, e.board)),
       );
 
       // Dropping below a full card invalidates the round's result.
-      const stillComplete = isRoundComplete(nextEntries.filter((e) => e.round === round));
+      const stillComplete = isRoundComplete(
+        nextEntries.filter((e) => e.round === round),
+      );
       await backend.write(
         gameKey(gameId),
         stillComplete ? resultFieldsFor(round, nextEntries, record.meta) : {},
@@ -283,7 +326,9 @@ export function createStore(backend: Backend = defaultBackend()) {
     );
     if (moving.length === 0) return record;
 
-    const remove = moving.map((e) => entryField(round, from.nsPair, from.ewPair, e.board));
+    const remove = moving.map((e) =>
+      entryField(round, from.nsPair, from.ewPair, e.board),
+    );
     const removed = new Set(remove);
     const updates: Record<string, string> = {};
     const nextEntries = record.entries.filter(
@@ -292,7 +337,8 @@ export function createStore(backend: Backend = defaultBackend()) {
 
     for (const entry of moving) {
       const moved: Entry = { ...entry, nsPair: to.nsPair, ewPair: to.ewPair };
-      updates[entryField(round, to.nsPair, to.ewPair, entry.board)] = encodeEntry(moved);
+      updates[entryField(round, to.nsPair, to.ewPair, entry.board)] =
+        encodeEntry(moved);
       nextEntries.push(moved);
     }
 
@@ -302,11 +348,20 @@ export function createStore(backend: Backend = defaultBackend()) {
     return (await loadGame(gameId))!;
   }
 
-  return { createGame, loadGame, writeEntries, deleteEntries, repointSegment, gameExists: (id: string) => backend.exists(gameKey(id)) };
+  return {
+    createGame,
+    loadGame,
+    writeEntries,
+    deleteEntries,
+    repointSegment,
+    gameExists: (id: string) => backend.exists(gameKey(id)),
+  };
 }
 
 function defaultBackend(): Backend {
-  const hasRedis = Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+  const hasRedis = Boolean(
+    process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN,
+  );
   return hasRedis ? redisBackend() : fsBackend();
 }
 

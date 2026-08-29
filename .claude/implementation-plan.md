@@ -419,7 +419,7 @@ pure functions with regression tests.
 
 1. Import the repo into Vercel.
 2. Storage → Create → **Upstash Redis** from the Marketplace.
-   `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are injected
+   `KV_REST_API_URL` and `KV_REST_API_TOKEN` are injected
    automatically; the app switches to Redis as soon as both are present.
 3. Deploy.
 

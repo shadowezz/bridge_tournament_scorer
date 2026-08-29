@@ -20,7 +20,7 @@ The app is built for Vercel.
 
 1. Import the repo into Vercel.
 2. Add **Upstash Redis** from the Vercel Marketplace (Storage → Create).
-   `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are injected
+   `KV_REST_API_URL` and `KV_REST_API_TOKEN` are injected
    automatically; the app switches to Redis as soon as both are present.
 3. Deploy. The free tier is far beyond what twelve players generate.
 
