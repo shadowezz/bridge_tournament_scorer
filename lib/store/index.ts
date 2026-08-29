@@ -358,11 +358,42 @@ export function createStore(backend: Backend = defaultBackend()) {
   };
 }
 
+/**
+ * Whether `Redis.fromEnv()` will find credentials. It accepts either naming
+ * convention, so this check has to as well - the Vercel Marketplace injects
+ * the `KV_` pair, a database provisioned straight from Upstash the other.
+ */
+function redisConfigured(): boolean {
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
+  const token =
+    process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
+  return Boolean(url && token);
+}
+
 function defaultBackend(): Backend {
-  const hasRedis = Boolean(
-    process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN,
+  if (redisConfigured()) {
+    console.log("[store] Redis backend");
+    return redisBackend();
+  }
+
+  // The fs backend writes under process.cwd(), which is read-only on Vercel.
+  // Falling back there would hide a missing-credentials mistake until the
+  // first save failed with EROFS - which, in a scorer nobody opens until the
+  // tournament starts, means mid-round. Refuse to start instead.
+  if (process.env.VERCEL) {
+    throw new Error(
+      "[store] no Redis credentials in a Vercel deployment, and the file " +
+        "backend cannot write to a read-only filesystem. Add the Upstash " +
+        "Redis integration (Storage -> Create) so KV_REST_API_URL and " +
+        "KV_REST_API_TOKEN are injected, then redeploy.",
+    );
+  }
+
+  console.warn(
+    "[store] no Redis credentials, falling back to the file backend under " +
+      "data/games. Run `vercel env pull .env.local` to use the deployed store.",
   );
-  return hasRedis ? redisBackend() : fsBackend();
+  return fsBackend();
 }
 
 let shared: ReturnType<typeof createStore> | null = null;
