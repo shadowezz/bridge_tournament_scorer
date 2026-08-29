@@ -4,3 +4,4 @@ node_modules
 data/games
 next-env.d.ts
 *.tsbuildinfo
+.vercel
