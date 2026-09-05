@@ -33,6 +33,30 @@ export function isClaimedByOther(input: {
   return lockedBoards.includes(board) && !takeOver.includes(board);
 }
 
+/**
+ * The boards a save is about to delete: seeded onto the form, no longer typed
+ * on any row.
+ *
+ * A save replaces the segment wholesale, so clearing a row and renumbering one
+ * are the same act - board 12 becoming board 14 leaves 12 in neither place.
+ * Swapping two rows' numbers drops nothing, which is why this compares against
+ * every row rather than row by row.
+ */
+export function droppedBoards(
+  seeded: ReadonlyArray<number | null>,
+  typed: ReadonlyArray<string>,
+): number[] {
+  const kept = new Set(
+    typed
+      .map((text) => Number(text.trim()))
+      .filter((board) => Number.isInteger(board) && board > 0),
+  );
+  const dropped = new Set(
+    seeded.filter((board): board is number => board !== null && !kept.has(board)),
+  );
+  return [...dropped].sort((a, b) => a - b);
+}
+
 export interface ParsedRows {
   rows: Array<{ board: number; contract: Contract }>;
   errors: Record<number, string>;

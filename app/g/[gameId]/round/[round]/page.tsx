@@ -38,8 +38,13 @@ export default async function RoundPage({ params, searchParams }: Props) {
   const entries = ready ? segmentView(view, nsPair, ewPair) : [];
   const seeds: RowSeed[] = entries.map((entry) =>
     isFullEntry(entry)
-      ? { board: String(entry.board), contract: formatContractInput(entry), locked: false }
-      : { board: String(entry.board), contract: "", locked: true },
+      ? {
+          board: String(entry.board),
+          contract: formatContractInput(entry),
+          locked: false,
+          origBoard: entry.board,
+        }
+      : { board: String(entry.board), contract: "", locked: true, origBoard: entry.board },
   );
   const lockedBoards = entries.filter((entry) => !isFullEntry(entry)).map((entry) => entry.board);
 
@@ -58,8 +63,9 @@ export default async function RoundPage({ params, searchParams }: Props) {
       {view.complete ? (
         <p className="notice info">
           This round is closed — every board is in.{" "}
-          <Link href={`/g/${gameId}/results/${round}`}>See the scoresheets</Link>. You can still
-          correct a typo here; the scores follow.
+          <Link href={`/g/${gameId}/results/${round}`}>See the scoresheets</Link>. Anyone can
+          correct or remove a board here now and the scores follow; the round stays closed
+          either way, and a removed board is flagged on the scoresheet.
         </p>
       ) : (
         <p className="muted">

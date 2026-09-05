@@ -17,6 +17,10 @@ export async function createGame(form: FormData): Promise<void> {
 /**
  * Save one segment's boards.
  *
+ * The submitted rows are the segment's contents, not a patch: the store
+ * removes any board this client may touch that the form no longer lists, so
+ * clearing a row and retyping its board number both delete the old entry.
+ *
  * Contracts are parsed here rather than trusted from the client, so the
  * stored score always comes from the same engine the results use.
  */
@@ -50,11 +54,8 @@ export async function saveSegment(
       message: `Board ${duplicates.join(", ")} is entered twice in this segment.`,
     };
   }
-  if (rows.length === 0) {
-    return { ok: false, errors: {}, conflicts: [], message: "Nothing to save yet." };
-  }
 
-  const { conflicts } = await store().writeEntries(gameId, {
+  const { conflicts, removed } = await store().writeSegment(gameId, {
     round,
     nsPair,
     ewPair,
@@ -65,14 +66,22 @@ export async function saveSegment(
 
   revalidatePath(`/g/${gameId}`, "layout");
 
+  // An empty form is not an instruction to wipe anything - it is someone who
+  // has not typed yet, and saying "Saved." to them would be a lie.
+  if (rows.length === 0 && removed.length === 0) {
+    return { ok: false, errors: {}, conflicts: [], message: "Nothing to save yet." };
+  }
+
+  const deleted = removed.length > 0 ? ` Board ${removed.join(", ")} deleted.` : "";
+
   return {
     ok: conflicts.length === 0,
     errors: {},
     conflicts,
     message:
       conflicts.length > 0
-        ? `Board ${conflicts.join(", ")} was entered by someone else and was left unchanged.`
-        : "Saved.",
+        ? `Board ${conflicts.join(", ")} was entered by someone else and was left unchanged.${deleted}`
+        : `Saved.${deleted}`,
   };
 }
 

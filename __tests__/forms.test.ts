@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isClaimedByOther, parseSegmentRows } from "@/lib/forms";
+import { droppedBoards, isClaimedByOther, parseSegmentRows } from "@/lib/forms";
 
 function form(values: Record<string, string>): FormData {
   const data = new FormData();
@@ -88,5 +88,37 @@ describe("parseSegmentRows", () => {
 
   it("treats an untouched form as nothing to save", () => {
     expect(parseSegmentRows(form({})).rows).toEqual([]);
+  });
+});
+
+describe("droppedBoards", () => {
+  const seeded = [12, 13, null, null, null, null];
+
+  it("drops the old number when a row is renumbered", () => {
+    expect(droppedBoards(seeded, ["14", "13", "", "", "", ""])).toEqual([12]);
+  });
+
+  it("drops the board when a row is cleared", () => {
+    expect(droppedBoards(seeded, ["", "13", "", "", "", ""])).toEqual([12]);
+  });
+
+  it("drops nothing when two rows swap numbers", () => {
+    expect(droppedBoards(seeded, ["13", "12", "", "", "", ""])).toEqual([]);
+  });
+
+  it("drops nothing for a row that was never seeded", () => {
+    expect(droppedBoards([null, null], ["", "7"])).toEqual([]);
+  });
+
+  it("keeps a board moved to a different row", () => {
+    expect(droppedBoards(seeded, ["", "13", "12", "", "", ""])).toEqual([]);
+  });
+
+  it("ignores half-typed numbers rather than treating them as a keep", () => {
+    expect(droppedBoards(seeded, ["1x", "13", "", "", "", ""])).toEqual([12]);
+  });
+
+  it("lists every board when the whole segment is cleared", () => {
+    expect(droppedBoards(seeded, ["", "", "", "", "", ""])).toEqual([12, 13]);
   });
 });

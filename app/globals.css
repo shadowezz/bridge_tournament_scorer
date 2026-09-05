@@ -123,6 +123,17 @@ tfoot td { font-weight: 700; border-bottom: none; }
 .notice.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
 .notice.info { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
+/*
+ * A save confirmation clears itself, so the next one is visibly new rather
+ * than an identical banner that was already on screen.
+ */
+.notice.fading { animation: notice-fade .5s ease 3s forwards; }
+@keyframes notice-fade { to { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .notice.fading { animation-duration: .01s; }
+}
+
 .nav { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
 .nav a {
   padding: .35rem .75rem;

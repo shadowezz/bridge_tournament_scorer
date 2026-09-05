@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState, useMemo, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { saveSegment } from "@/app/actions";
-import { emptySubmission, isClaimedByOther } from "@/lib/forms";
+import { droppedBoards, emptySubmission, isClaimedByOther } from "@/lib/forms";
 import { ContractParseError, formatContract, parseContract, tricksTaken } from "@/lib/bridge/contract";
 import { nsScore } from "@/lib/bridge/score";
 import { BOARDS_PER_SEGMENT, type GameMeta, type Pair, teamOf } from "@/lib/types";
@@ -12,6 +12,21 @@ export interface RowSeed {
   contract: string;
   /** Entered by someone else at the table; content is not sent to us. */
   locked: boolean;
+  /**
+   * The board this row was seeded with, or null for an untouched row. Client
+   * state only - it never reaches the server, which works out what to delete
+   * from the segment's submitted contents.
+   */
+  origBoard: number | null;
+}
+
+/**
+ * A row as the form holds it. `removing` is a mark, not an erasure: the board
+ * and contract stay on screen so the player can see - and undo - what they are
+ * about to delete.
+ */
+interface RowState extends RowSeed {
+  removing: boolean;
 }
 
 interface Props {
@@ -53,24 +68,73 @@ export function SegmentForm(props: Props) {
   const { gameId, round, meta, seeds, lockedBoards, roundClosed } = props;
 
   const [state, action, pending] = useActionState(saveSegment, emptySubmission);
-  const [rows, setRows] = useState<RowSeed[]>(() => {
-    const padded = [...seeds];
-    while (padded.length < BOARDS_PER_SEGMENT) padded.push({ board: "", contract: "", locked: false });
+  const [rows, setRows] = useState<RowState[]>(() => {
+    const padded: RowState[] = seeds.map((seed) => ({ ...seed, removing: false }));
+    while (padded.length < BOARDS_PER_SEGMENT)
+      padded.push({ board: "", contract: "", locked: false, origBoard: null, removing: false });
     return padded.slice(0, BOARDS_PER_SEGMENT);
   });
   const [takeOver, setTakeOver] = useState<number[]>([]);
 
-  const update = (index: number, patch: Partial<RowSeed>) =>
+  /**
+   * The last save's message.
+   *
+   * A successful one fades out and unmounts, so the next save reappears as a
+   * fresh banner rather than leaving identical "Saved." text on screen that
+   * gives the player nothing to see.
+   */
+  const [flash, setFlash] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const update = (index: number, patch: Partial<RowState>) =>
     setRows((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+
+  useEffect(() => {
+    const { ok, message } = state;
+    if (message) setFlash({ ok, message });
+  }, [state]);
+
+  /**
+   * Re-baseline the rows once a save lands.
+   *
+   * The form is keyed on the segment, so a save does not remount it and the
+   * seeds it was built from go stale: without this, a row renumbered from 3 to
+   * 7 would keep offering to delete board 3 on every later save. The rows are
+   * re-seeded from what was just written rather than from the revalidated
+   * props, which arrive on their own schedule and would clobber anything typed
+   * in the meantime.
+   */
+  useEffect(() => {
+    if (!state.ok) return;
+    setRows((current) =>
+      current.map((row) =>
+        row.removing
+          ? { board: "", contract: "", locked: false, origBoard: null, removing: false }
+          : { ...row, origBoard: row.board.trim() === "" ? null : Number(row.board) },
+      ),
+    );
+  }, [state]);
+
+  // A marked row's inputs are disabled, so it submits nothing and the segment
+  // reconcile drops the board. That also keeps it out of both tallies below:
+  // it is neither a board being kept nor a board being typed twice.
+  const submittedBoards = useMemo(
+    () => rows.map((row) => (row.removing ? "" : row.board)),
+    [rows],
+  );
+
+  const dropped = useMemo(
+    () => droppedBoards(rows.map((row) => row.origBoard), submittedBoards),
+    [rows, submittedBoards],
+  );
 
   const duplicates = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const row of rows) {
-      const board = row.board.trim();
-      if (board !== "") counts.set(board, (counts.get(board) ?? 0) + 1);
+    for (const board of submittedBoards) {
+      const trimmed = board.trim();
+      if (trimmed !== "") counts.set(trimmed, (counts.get(trimmed) ?? 0) + 1);
     }
     return new Set([...counts].filter(([, n]) => n > 1).map(([board]) => board));
-  }, [rows]);
+  }, [submittedBoards]);
 
   return (
     <form action={action} className="stack">
@@ -91,10 +155,15 @@ export function SegmentForm(props: Props) {
           });
 
           const parsed = claimedByOther ? null : preview(row.contract);
-          const duplicated = row.board.trim() !== "" && duplicates.has(row.board.trim());
+          const duplicated =
+            !row.removing && row.board.trim() !== "" && duplicates.has(row.board.trim());
 
           return (
-            <div key={index} className="card" style={{ padding: ".75rem" }}>
+            <div
+              key={index}
+              className="card"
+              style={{ padding: ".75rem", opacity: row.removing ? 0.55 : 1 }}
+            >
               <div className="row" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
                 <div style={{ width: "5.5rem", flexShrink: 0 }}>
                   <label htmlFor={`board-${index}`}>Board</label>
@@ -106,7 +175,10 @@ export function SegmentForm(props: Props) {
                     onChange={(event) => update(index, { board: event.target.value })}
                     autoComplete="off"
                     aria-invalid={duplicated}
-                    disabled={claimedByOther}
+                    // Disabled inputs submit nothing, which is how both a
+                    // marked row and someone else's row stay out of the save.
+                    disabled={claimedByOther || row.removing}
+                    style={row.removing ? { textDecoration: "line-through" } : undefined}
                   />
                 </div>
 
@@ -121,9 +193,27 @@ export function SegmentForm(props: Props) {
                     autoComplete="off"
                     autoCapitalize="characters"
                     spellCheck={false}
-                    disabled={claimedByOther}
+                    disabled={claimedByOther || row.removing}
+                    style={row.removing ? { textDecoration: "line-through" } : undefined}
                   />
                 </div>
+
+                {row.origBoard !== null && !claimedByOther && (
+                  <button
+                    type="button"
+                    className="link"
+                    style={{ flexShrink: 0, alignSelf: "flex-end", paddingBottom: ".55rem" }}
+                    onClick={() => update(index, { removing: !row.removing })}
+                    aria-pressed={row.removing}
+                    aria-label={
+                      row.removing
+                        ? `Keep board ${row.origBoard}`
+                        : `Remove board ${row.origBoard}`
+                    }
+                  >
+                    {row.removing ? "Keep" : "Remove"}
+                  </button>
+                )}
               </div>
 
               <div style={{ marginTop: ".4rem", minHeight: "1.25rem" }}>
@@ -133,7 +223,11 @@ export function SegmentForm(props: Props) {
                   </span>
                 )}
 
-                {claimedByOther ? (
+                {row.removing ? (
+                  <span className="muted" style={{ color: "var(--danger)" }}>
+                    Marked for deletion — press Keep to change your mind.
+                  </span>
+                ) : claimedByOther ? (
                   <span className="muted">
                     Already entered by someone else at your table.{" "}
                     <button
@@ -160,8 +254,22 @@ export function SegmentForm(props: Props) {
         })}
       </div>
 
-      {state.message && (
-        <p className={`notice ${state.ok ? "info" : "error"}`}>{state.message}</p>
+      {dropped.length > 0 && (
+        <p className="notice warn">
+          Saving will delete board {dropped.join(", ")} from this table.{" "}
+          {roundClosed
+            ? "The round stays closed, but the scoresheet will flag the missing board."
+            : "You can enter it again afterwards."}
+        </p>
+      )}
+
+      {flash && (
+        <p
+          className={`notice ${flash.ok ? "info fading" : "error"}`}
+          onAnimationEnd={() => setFlash(null)}
+        >
+          {flash.message}
+        </p>
       )}
 
       <div className="row">

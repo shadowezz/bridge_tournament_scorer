@@ -1,5 +1,5 @@
 import { ENTRIES_PER_ROUND, ROUNDS, type Entry, type GameMeta, type MaskedEntry } from "@/lib/types";
-import { isRoundComplete } from "@/lib/tournament/compute";
+import { isRoundClosed } from "@/lib/tournament/compute";
 import type { RoundResult } from "@/lib/tournament/compute";
 import type { GameRecord } from "@/lib/store";
 
@@ -48,7 +48,8 @@ function mask(entry: Entry): MaskedEntry {
  * While a round is open a client sees only what it submitted itself; every
  * other board is masked. A pair's own boards in isolation reveal nothing,
  * because scoring a board needs the other table's result too. Once the round
- * closes, it is all public.
+ * closes, it is all public - and it stays closed, so deleting a board later
+ * does not put the genie back in the bottle.
  */
 export function visibleRound(
   round: number,
@@ -57,7 +58,7 @@ export function visibleRound(
   clientId: string,
 ): VisibleRound {
   const forRound = entries.filter((e) => e.round === round);
-  const complete = isRoundComplete(forRound);
+  const complete = isRoundClosed(forRound, result);
 
   return {
     round,

@@ -78,6 +78,23 @@ export function isRoundComplete(entries: Entry[]): boolean {
   return entries.length >= ENTRIES_PER_ROUND;
 }
 
+/**
+ * Whether a round is closed to the visibility rules and open to everyone's
+ * edits.
+ *
+ * Closure latches: a round that has ever been full stays closed even if a
+ * board is later deleted. The stored result is the latch - it is written the
+ * first time the round fills up and never removed - because reopening a round
+ * mid-tournament would re-mask entries everyone has already seen and pull the
+ * scoresheets out from under them.
+ */
+export function isRoundClosed(
+  entries: Entry[],
+  result: RoundResult | null | undefined,
+): boolean {
+  return isRoundComplete(entries) || Boolean(result);
+}
+
 function scoreMatchup(matchup: ReturnType<typeof groupMatchups>[number]): MatchupResult | null {
   const { home, away, homeNs, awayNs } = orientations(matchup);
   if (!homeNs || !awayNs) return null;

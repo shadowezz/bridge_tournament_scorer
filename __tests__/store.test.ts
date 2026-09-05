@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createStore } from "@/lib/store";
+import { createStore, type GameRecord } from "@/lib/store";
 import type { Backend } from "@/lib/store/backend";
 import { parseContract } from "@/lib/bridge/contract";
-import { digestEntries } from "@/lib/tournament/compute";
+import { computeRound, digestEntries } from "@/lib/tournament/compute";
 import { isFullEntry, isMasked, visibleGame, visibleRound } from "@/lib/visibility";
 import { completeRound, meta } from "./fixtures";
 
@@ -30,6 +30,11 @@ function memoryBackend(): Backend & { dump: () => Record<string, Record<string, 
 const rows = (boards: Array<[number, string]>) =>
   boards.map(([board, text]) => ({ board, contract: parseContract(text) }));
 
+/** The A1-vs-B1 segment of `completeRound`, which several tests re-post whole. */
+const set1: Array<[number, string]> = [
+  [1, "4HN="], [2, "4SN+1"], [3, "3NTE="], [4, "2HN+1"], [5, "5CxE-2"], [6, "pass"],
+];
+
 async function seedCompleteRound(store: ReturnType<typeof createStore>, round = 1) {
   await store.createGame(meta);
   const entries = completeRound(round);
@@ -40,7 +45,7 @@ async function seedCompleteRound(store: ReturnType<typeof createStore>, round = 
   }
   for (const [key, group] of segments) {
     const [nsPair, ewPair] = key.split("|");
-    await store.writeEntries(meta.id, {
+    await store.writeSegment(meta.id, {
       round,
       nsPair,
       ewPair,
@@ -72,7 +77,7 @@ describe("store", () => {
 
   it("keeps the round unscored until every board is in", async () => {
     await store.createGame(meta);
-    await store.writeEntries(meta.id, {
+    await store.writeSegment(meta.id, {
       round: 1,
       nsPair: "A1",
       ewPair: "B1",
@@ -96,7 +101,7 @@ describe("store", () => {
   it("rejects a segment whose pairs share a team", async () => {
     await store.createGame(meta);
     await expect(
-      store.writeEntries(meta.id, {
+      store.writeSegment(meta.id, {
         round: 1,
         nsPair: "A1",
         ewPair: "A2",
@@ -112,7 +117,7 @@ describe("ownership", () => {
   beforeEach(async () => {
     store = createStore(memoryBackend());
     await store.createGame(meta);
-    await store.writeEntries(meta.id, {
+    await store.writeSegment(meta.id, {
       round: 1,
       nsPair: "A1",
       ewPair: "B1",
@@ -122,7 +127,7 @@ describe("ownership", () => {
   });
 
   it("refuses to overwrite another client's board and reports the conflict", async () => {
-    const { conflicts, record } = await store.writeEntries(meta.id, {
+    const { conflicts, record } = await store.writeSegment(meta.id, {
       round: 1,
       nsPair: "A1",
       ewPair: "B1",
@@ -136,7 +141,7 @@ describe("ownership", () => {
   });
 
   it("transfers ownership when the board is explicitly taken over", async () => {
-    const { conflicts, record } = await store.writeEntries(meta.id, {
+    const { conflicts, record } = await store.writeSegment(meta.id, {
       round: 1,
       nsPair: "A1",
       ewPair: "B1",
@@ -151,7 +156,7 @@ describe("ownership", () => {
   });
 
   it("lets the owner edit their own board freely", async () => {
-    const { conflicts, record } = await store.writeEntries(meta.id, {
+    const { conflicts, record } = await store.writeSegment(meta.id, {
       round: 1,
       nsPair: "A1",
       ewPair: "B1",
@@ -175,6 +180,132 @@ describe("ownership", () => {
   });
 });
 
+describe("a segment save replaces the segment's contents", () => {
+  let backend: ReturnType<typeof memoryBackend>;
+  let store: ReturnType<typeof createStore>;
+
+  const fields = () => Object.keys(backend.dump()[`g:${meta.id}`]);
+
+  beforeEach(async () => {
+    backend = memoryBackend();
+    store = createStore(backend);
+    await store.createGame(meta);
+    await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "owner", rows: rows(set1),
+    });
+  });
+
+  it("removes a board the save no longer lists", async () => {
+    const { removed, record } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "owner",
+      rows: rows(set1.filter(([board]) => board !== 6)),
+    });
+
+    expect(removed).toEqual([6]);
+    expect(record.entries).toHaveLength(5);
+    expect(fields()).not.toContain("r1|A1|B1|6");
+  });
+
+  it("carries a renumbered board across instead of leaving both behind", async () => {
+    const { removed } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "owner",
+      rows: rows(set1.map(([board, text]) => (board === 3 ? [7, text] : [board, text]))),
+    });
+
+    expect(removed).toEqual([3]);
+    expect(fields()).toContain("r1|A1|B1|7");
+    expect(fields()).not.toContain("r1|A1|B1|3");
+  });
+
+  it("empties a segment when every row is cleared", async () => {
+    const { removed, record } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "owner", rows: [],
+    });
+
+    expect(removed).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(record.entries).toHaveLength(0);
+  });
+
+  it("neither overwrites nor removes another client's boards while the round is open", async () => {
+    const { conflicts, removed, record } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "stranger", rows: rows([[1, "3NTS="]]),
+    });
+
+    // Board 1 came back as a conflict, and the five boards the stranger never
+    // mentioned are not theirs to reconcile away.
+    expect(conflicts).toEqual([1]);
+    expect(removed).toEqual([]);
+    expect(record.entries).toHaveLength(6);
+    expect(record.entries.every((e) => e.clientId === "owner")).toBe(true);
+  });
+
+  it("leaves the old board alone when its replacement is rejected", async () => {
+    // "stranger" owns board 9 and tries to renumber it onto "owner"'s board 4.
+    await store.writeSegment(meta.id, {
+      round: 1, nsPair: "B2", ewPair: "C1", clientId: "stranger", rows: rows([[9, "4HS-1"]]),
+    });
+    const { conflicts, record } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "stranger", rows: rows([[4, "3NTS="]]),
+    });
+
+    expect(conflicts).toEqual([4]);
+    expect(record.entries.filter((e) => e.nsPair === "A1" && e.ewPair === "B1")).toHaveLength(6);
+  });
+});
+
+describe("a closed round is open to everyone", () => {
+  let backend: ReturnType<typeof memoryBackend>;
+  let store: ReturnType<typeof createStore>;
+
+  beforeEach(async () => {
+    backend = memoryBackend();
+    store = createStore(backend);
+    await seedCompleteRound(store);
+  });
+
+  const segmentEntries = (record: GameRecord) =>
+    record.entries.filter((e) => e.nsPair === "A1" && e.ewPair === "B1");
+
+  it("lets a client that entered nothing overwrite and remove boards", async () => {
+    const { conflicts, removed, record } = await store.writeSegment(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", clientId: "stranger",
+      rows: rows(
+        set1
+          .filter(([board]) => board !== 6)
+          .map(([board, text]) => (board === 1 ? [1, "3NTS="] : [board, text])),
+      ),
+    });
+
+    expect(conflicts).toEqual([]);
+    expect(removed).toEqual([6]);
+    expect(segmentEntries(record)).toHaveLength(5);
+    expect(segmentEntries(record).find((e) => e.board === 1)!.clientId).toBe("stranger");
+  });
+
+  it("lets any client delete a board outright", async () => {
+    const record = await store.deleteEntries(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", boards: [1], clientId: "stranger",
+    });
+    expect(record.entries).toHaveLength(35);
+  });
+
+  it("keeps the latch on disk, so a reload does not reopen the round", async () => {
+    await store.deleteEntries(meta.id, {
+      round: 1, nsPair: "A1", ewPair: "B1", boards: [1], clientId: "client-a1",
+    });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const record = await store.loadGame(meta.id);
+
+    expect(record!.results[1]).toBeDefined();
+    expect(record!.results[1].sourceDigest).toBe(
+      digestEntries(record!.entries.filter((e) => e.round === 1)),
+    );
+    expect(warn).not.toHaveBeenCalled();
+    expect(Object.keys(backend.dump()[`g:${meta.id}`])).toContain("r1|result");
+  });
+});
+
 describe("edits propagate all the way to victory points", () => {
   let store: ReturnType<typeof createStore>;
   beforeEach(async () => {
@@ -187,9 +318,10 @@ describe("edits propagate all the way to victory points", () => {
     expect(before.teamVp.A).toBe(23.24);
 
     // Board 5 was 5CxE-2 (+300 to A). Make it a made game for B instead.
-    const { record } = await store.writeEntries(meta.id, {
+    // The whole segment is re-posted because a save replaces its contents.
+    const { record } = await store.writeSegment(meta.id, {
       round: 1, nsPair: "A1", ewPair: "B1", clientId: "client-a1",
-      rows: rows([[5, "5CxE="]]),
+      rows: rows(set1.map((row) => (row[0] === 5 ? [5, "5CxE="] : row))),
     });
 
     const after = record.results[1];
@@ -208,12 +340,18 @@ describe("edits propagate all the way to victory points", () => {
     expect(after.sourceDigest).not.toBe(before.sourceDigest);
   });
 
-  it("recomputes after a delete and drops the result below a full card", async () => {
+  it("recomputes after a delete without reopening the round", async () => {
     const record = await store.deleteEntries(meta.id, {
       round: 1, nsPair: "A1", ewPair: "B1", boards: [1], clientId: "client-a1",
     });
+
+    // Closure latches. The round keeps its result and its place in the
+    // standings; the hole shows up as a board-mismatch on the scoresheet
+    // rather than as a round that silently reopened mid-tournament.
     expect(record.entries).toHaveLength(35);
-    expect(record.results[1]).toBeUndefined();
+    expect(record.results[1]).toBeDefined();
+    expect(record.results[1].status).toBe("unresolved");
+    expect(record.results[1].validation.map((i) => i.code)).toContain("board-mismatch");
   });
 
   it("recomputes after a segment is repointed", async () => {
@@ -301,9 +439,21 @@ describe("visibility filter", () => {
     expect(view.entryCount).toBe(30);
   });
 
-  it("withholds the result while the round is open, even if one is passed in", () => {
-    const bogus = { round: 1, teamVp: { A: 1 } } as never;
-    expect(visibleRound(1, open, bogus, "client-a1").result).toBeNull();
+  it("withholds the result while the round is open", () => {
+    expect(visibleRound(1, open, null, "client-a1").result).toBeNull();
+  });
+
+  it("treats a stored result as the closure latch, however few entries remain", () => {
+    // A result only ever gets written for a round that was full, so its
+    // presence means the round closed - even if boards have since been
+    // deleted. Reopening would re-mask entries everyone has already seen.
+    const result = computeRound(1, entries, meta);
+    const view = visibleRound(1, open, result, "nobody");
+
+    expect(view.complete).toBe(true);
+    expect(view.entries.some(isMasked)).toBe(false);
+    expect(view.entryCount).toBe(30);
+    expect(view.result).toBe(result);
   });
 
   it("opens everything to everyone once the round closes", () => {
@@ -321,7 +471,7 @@ describe("visibility filter", () => {
   it("applies the rules independently per round", async () => {
     const store = createStore(memoryBackend());
     await seedCompleteRound(store, 1);
-    await store.writeEntries(meta.id, {
+    await store.writeSegment(meta.id, {
       round: 2, nsPair: "A1", ewPair: "B1", clientId: "client-a1", rows: rows([[1, "4HN="]]),
     });
 

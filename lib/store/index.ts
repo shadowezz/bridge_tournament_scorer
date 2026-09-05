@@ -5,6 +5,7 @@ import { nsScore } from "@/lib/bridge/score";
 import {
   computeRound,
   digestEntries,
+  isRoundClosed,
   isRoundComplete,
   type RoundResult,
 } from "@/lib/tournament/compute";
@@ -32,6 +33,8 @@ export interface SegmentRow {
 export interface WriteOutcome {
   /** Boards owned by another client that were not overwritten. */
   conflicts: number[];
+  /** Boards the reconcile removed because the segment no longer lists them. */
+  removed: number[];
   record: GameRecord;
 }
 
@@ -83,14 +86,20 @@ export function createStore(backend: Backend = defaultBackend()) {
    * Recompute a round and return the fields to persist alongside whatever
    * change triggered it. Every mutation funnels through here, so no code
    * path can change an entry without its victory points following.
+   *
+   * `closed` says whether the round was already closed before this change.
+   * A closed round keeps being scored even after a board is deleted: the hole
+   * surfaces as a `board-mismatch` on the scoresheet, which is far more use
+   * than the round quietly vanishing from the standings.
    */
   function resultFieldsFor(
     round: number,
     entries: Entry[],
     meta: GameMeta,
+    closed: boolean,
   ): Record<string, string> {
     const forRound = entries.filter((e) => e.round === round);
-    if (!isRoundComplete(forRound)) return {};
+    if (!isRoundComplete(forRound) && !closed) return {};
     return {
       [resultField(round)]: JSON.stringify(computeRound(round, forRound, meta)),
     };
@@ -135,14 +144,11 @@ export function createStore(backend: Backend = defaultBackend()) {
     for (const round of ROUNDS) {
       const forRound = record.entries.filter((e) => e.round === round);
       const stored = record.results[round];
-      const complete = isRoundComplete(forRound);
 
-      if (!complete) {
-        // A round that has fallen back below a full card should not keep a
-        // stale result hanging around.
-        if (stored) delete record.results[round];
-        continue;
-      }
+      // A round is scored once it has ever been full. A stored result is kept
+      // even when the entries have since dropped below a full card - closure
+      // latches, so the result is recomputed rather than discarded.
+      if (!isRoundComplete(forRound) && !stored) continue;
 
       if (stored && stored.sourceDigest === digestEntries(forRound)) continue;
 
@@ -166,13 +172,21 @@ export function createStore(backend: Backend = defaultBackend()) {
   }
 
   /**
-   * Upsert a segment's boards.
+   * Replace one segment's boards with the rows the client submitted.
    *
-   * Boards already owned by another client are skipped and reported unless
-   * explicitly listed in `takeOver`, which is how a player corrects a
-   * tablemate's typo without ever being shown the previous value.
+   * The rows are the segment's contents, not a patch: any stored board this
+   * client may touch and did not submit is removed in the same write. That is
+   * what makes renumbering a row safe - the old board number leaves with the
+   * save that introduced the new one, instead of lingering as a seventh entry
+   * in a six-board segment that nobody can see and the round count believes.
+   *
+   * While the round is open a client may only change or remove its own
+   * boards; another client's are reported as conflicts and left untouched,
+   * unless explicitly listed in `takeOver`, which is how a player corrects a
+   * tablemate's typo without ever being shown the previous value. Once the
+   * round has closed the segment is open to everyone.
    */
-  async function writeEntries(
+  async function writeSegment(
     gameId: string,
     input: {
       round: number;
@@ -191,15 +205,17 @@ export function createStore(backend: Backend = defaultBackend()) {
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
 
-    const takeOver = new Set(input.takeOver ?? []);
-    const owned = new Map(
-      record.entries
-        .filter(
-          (e) =>
-            e.round === round && e.nsPair === nsPair && e.ewPair === ewPair,
-        )
-        .map((e) => [e.board, e]),
+    const closed = isRoundClosed(
+      record.entries.filter((e) => e.round === round),
+      record.results[round] ?? null,
     );
+    const takeOver = new Set(input.takeOver ?? []);
+    const mayTouch = (entry: Entry) => closed || entry.clientId === clientId;
+
+    const segment = record.entries.filter(
+      (e) => e.round === round && e.nsPair === nsPair && e.ewPair === ewPair,
+    );
+    const byBoard = new Map(segment.map((e) => [e.board, e]));
 
     const conflicts: number[] = [];
     const updates: Record<string, string> = {};
@@ -207,12 +223,8 @@ export function createStore(backend: Backend = defaultBackend()) {
     const nextEntries = [...record.entries];
 
     for (const row of rows) {
-      const existing = owned.get(row.board);
-      if (
-        existing &&
-        existing.clientId !== clientId &&
-        !takeOver.has(row.board)
-      ) {
+      const existing = byBoard.get(row.board);
+      if (existing && !mayTouch(existing) && !takeOver.has(row.board)) {
         conflicts.push(row.board);
         continue;
       }
@@ -242,16 +254,39 @@ export function createStore(backend: Backend = defaultBackend()) {
       else nextEntries.push(entry);
     }
 
-    if (Object.keys(updates).length > 0) {
-      Object.assign(updates, resultFieldsFor(round, nextEntries, record.meta));
-      await backend.write(gameKey(gameId), updates);
+    // Anything the segment no longer lists is gone. A board that came back as
+    // a conflict was still submitted, so it survives - `submitted`, not the
+    // boards actually written, is what decides.
+    const submitted = new Set(rows.map((row) => row.board));
+    const removed = segment.filter((e) => !submitted.has(e.board) && mayTouch(e));
+    const removeFields = removed.map((e) =>
+      entryField(round, nsPair, ewPair, e.board),
+    );
+    const gone = new Set(removeFields);
+    const finalEntries = nextEntries.filter(
+      (e) => !gone.has(entryField(e.round, e.nsPair, e.ewPair, e.board)),
+    );
+
+    if (Object.keys(updates).length > 0 || removeFields.length > 0) {
+      Object.assign(
+        updates,
+        resultFieldsFor(round, finalEntries, record.meta, closed),
+      );
+      await backend.write(gameKey(gameId), updates, removeFields);
     }
 
     const refreshed = await loadGame(gameId);
-    return { conflicts, record: refreshed! };
+    return {
+      conflicts,
+      removed: removed.map((e) => e.board).sort((a, b) => a - b),
+      record: refreshed!,
+    };
   }
 
-  /** Delete boards from a segment. Only the owning client may remove an entry. */
+  /**
+   * Delete boards from a segment. While the round is open only the owning
+   * client may remove an entry; once it has closed anyone may.
+   */
   async function deleteEntries(
     gameId: string,
     input: {
@@ -267,13 +302,18 @@ export function createStore(backend: Backend = defaultBackend()) {
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
 
+    const closed = isRoundClosed(
+      record.entries.filter((e) => e.round === round),
+      record.results[round] ?? null,
+    );
+
     const removable = record.entries.filter(
       (e) =>
         e.round === round &&
         e.nsPair === nsPair &&
         e.ewPair === ewPair &&
         boards.includes(e.board) &&
-        e.clientId === clientId,
+        (closed || e.clientId === clientId),
     );
 
     if (removable.length > 0) {
@@ -285,14 +325,10 @@ export function createStore(backend: Backend = defaultBackend()) {
         (e) => !removed.has(entryField(e.round, e.nsPair, e.ewPair, e.board)),
       );
 
-      // Dropping below a full card invalidates the round's result.
-      const stillComplete = isRoundComplete(
-        nextEntries.filter((e) => e.round === round),
-      );
       await backend.write(
         gameKey(gameId),
-        stillComplete ? resultFieldsFor(round, nextEntries, record.meta) : {},
-        stillComplete ? remove : [...remove, resultField(round)],
+        resultFieldsFor(round, nextEntries, record.meta, closed),
+        remove,
       );
     }
 
@@ -316,6 +352,11 @@ export function createStore(backend: Backend = defaultBackend()) {
 
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
+
+    const closed = isRoundClosed(
+      record.entries.filter((e) => e.round === round),
+      record.results[round] ?? null,
+    );
 
     const moving = record.entries.filter(
       (e) =>
@@ -342,7 +383,10 @@ export function createStore(backend: Backend = defaultBackend()) {
       nextEntries.push(moved);
     }
 
-    Object.assign(updates, resultFieldsFor(round, nextEntries, record.meta));
+    Object.assign(
+      updates,
+      resultFieldsFor(round, nextEntries, record.meta, closed),
+    );
     await backend.write(gameKey(gameId), updates, remove);
 
     return (await loadGame(gameId))!;
@@ -351,7 +395,7 @@ export function createStore(backend: Backend = defaultBackend()) {
   return {
     createGame,
     loadGame,
-    writeEntries,
+    writeSegment,
     deleteEntries,
     repointSegment,
     gameExists: (id: string) => backend.exists(gameKey(id)),
