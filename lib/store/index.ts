@@ -5,11 +5,12 @@ import { nsScore } from "@/lib/bridge/score";
 import {
   computeRound,
   digestEntries,
-  isRoundClosed,
-  isRoundComplete,
+  isRoundEnded,
   type RoundResult,
 } from "@/lib/tournament/compute";
 import { validateSegmentPairing } from "@/lib/tournament/validate";
+import { isAdmin } from "@/lib/admin";
+import { isValidClientId } from "@/lib/ids";
 import {
   ROUNDS,
   type Contract,
@@ -23,6 +24,32 @@ export interface GameRecord {
   entries: Entry[];
   /** Persisted round results, keyed by round number. */
   results: Record<number, RoundResult>;
+  /**
+   * Client ids holding admin.
+   *
+   * A client id is a bearer credential - the session box accepts any code and
+   * becomes it - so these must never reach the browser. `visibleGame` reduces
+   * them to a boolean and a count before anything is rendered.
+   */
+  admins: string[];
+  /** Whether anyone with the link may still claim admin. */
+  claimingOpen: boolean;
+}
+
+/** Thrown when a non-admin tries to change a round an admin has ended. */
+export class RoundEndedError extends Error {
+  constructor(message = "This round has ended. Only an admin can change it.") {
+    super(message);
+    this.name = "RoundEndedError";
+  }
+}
+
+/** Thrown when a client without admin attempts an admin-only action. */
+export class NotAdminError extends Error {
+  constructor(message = "Only an admin can do that.") {
+    super(message);
+    this.name = "NotAdminError";
+  }
 }
 
 export interface SegmentRow {
@@ -40,6 +67,10 @@ export interface WriteOutcome {
 
 const gameKey = (gameId: string) => `g:${gameId}`;
 const resultField = (round: number) => `r${round}|result`;
+/** One field per admin, so simultaneous claims cannot clobber each other. */
+const adminField = (clientId: string) => `admin|${clientId}`;
+const ADMIN_PREFIX = "admin|";
+const CLAIMING_FIELD = "claiming";
 const entryField = (
   round: number,
   nsPair: PairId,
@@ -83,12 +114,13 @@ function encodeEntry(entry: Entry): string {
 
 export function createStore(backend: Backend = defaultBackend()) {
   /**
-   * Recompute a round and return the fields to persist alongside whatever
-   * change triggered it. Every mutation funnels through here, so no code
-   * path can change an entry without its victory points following.
+   * Recompute an ended round and return the fields to persist alongside
+   * whatever change triggered it. Every mutation funnels through here, so no
+   * code path can change an entry without its victory points following.
    *
-   * `closed` says whether the round was already closed before this change.
-   * A closed round keeps being scored even after a board is deleted: the hole
+   * A round that has not been ended has no result at all - filling all 36
+   * boards no longer scores anything, an admin pressing End round does. An
+   * ended round keeps being scored even after a board is deleted: the hole
    * surfaces as a `board-mismatch` on the scoresheet, which is far more use
    * than the round quietly vanishing from the standings.
    */
@@ -96,12 +128,14 @@ export function createStore(backend: Backend = defaultBackend()) {
     round: number,
     entries: Entry[],
     meta: GameMeta,
-    closed: boolean,
+    endedAt: string | null,
   ): Record<string, string> {
+    if (endedAt === null) return {};
     const forRound = entries.filter((e) => e.round === round);
-    if (!isRoundComplete(forRound) && !closed) return {};
     return {
-      [resultField(round)]: JSON.stringify(computeRound(round, forRound, meta)),
+      [resultField(round)]: JSON.stringify(
+        computeRound(round, forRound, meta, endedAt),
+      ),
     };
   }
 
@@ -112,12 +146,30 @@ export function createStore(backend: Backend = defaultBackend()) {
     const meta = JSON.parse(fields.meta) as GameMeta;
     const entries: Entry[] = [];
     const results: Record<number, RoundResult> = {};
+    const admins: string[] = [];
+    // Absent means open, so games created before admins existed stay claimable.
+    let claimingOpen = true;
 
     for (const [field, raw] of Object.entries(fields)) {
       if (field === "meta") continue;
+      if (field === CLAIMING_FIELD) {
+        claimingOpen = raw !== "closed";
+        continue;
+      }
+      if (field.startsWith(ADMIN_PREFIX)) {
+        admins.push(field.slice(ADMIN_PREFIX.length));
+        continue;
+      }
       if (field.endsWith("|result")) {
         const result = JSON.parse(raw) as RoundResult;
-        results[result.round] = result;
+        // Results written before rounds were ended by hand carry no `endedAt`.
+        // Back-filling it from `computedAt` - when the old code scored the
+        // round, which was the moment it auto-closed - keeps every later read
+        // honest. Without it a legacy round reads as "not ended" at exactly
+        // the points that decide whether an edit recomputes the score.
+        results[result.round] = result.endedAt
+          ? result
+          : { ...result, endedAt: result.computedAt };
         continue;
       }
       const entry = decodeEntryField(field, raw);
@@ -125,7 +177,8 @@ export function createStore(backend: Backend = defaultBackend()) {
     }
 
     entries.sort((a, b) => a.round - b.round || a.board - b.board);
-    return { meta, entries, results };
+    admins.sort();
+    return { meta, entries, results, admins, claimingOpen };
   }
 
   /**
@@ -145,17 +198,15 @@ export function createStore(backend: Backend = defaultBackend()) {
       const forRound = record.entries.filter((e) => e.round === round);
       const stored = record.results[round];
 
-      // A round is scored once it has ever been full. A stored result is kept
-      // even when the entries have since dropped below a full card - closure
-      // latches, so the result is recomputed rather than discarded.
-      if (!isRoundComplete(forRound) && !stored) continue;
+      // Only an ended round has a result, and it keeps one even when the
+      // entries have since dropped below a full card - ending latches, so the
+      // result is recomputed rather than discarded.
+      if (!stored) continue;
 
-      if (stored && stored.sourceDigest === digestEntries(forRound)) continue;
+      if (stored.sourceDigest === digestEntries(forRound)) continue;
 
-      console.warn(
-        `[store] round ${round} of ${gameId}: ${stored ? "stale" : "missing"} result, recomputing`,
-      );
-      const fresh = computeRound(round, forRound, record.meta);
+      console.warn(`[store] round ${round} of ${gameId}: stale result, recomputing`);
+      const fresh = computeRound(round, forRound, record.meta, stored.endedAt);
       record.results[round] = fresh;
       repairs[resultField(round)] = JSON.stringify(fresh);
     }
@@ -183,8 +234,9 @@ export function createStore(backend: Backend = defaultBackend()) {
    * While the round is open a client may only change or remove its own
    * boards; another client's are reported as conflicts and left untouched,
    * unless explicitly listed in `takeOver`, which is how a player corrects a
-   * tablemate's typo without ever being shown the previous value. Once the
-   * round has closed the segment is open to everyone.
+   * tablemate's typo without ever being shown the previous value. Once an
+   * admin has ended the round the segment is frozen to everyone but admins,
+   * who may then touch any board.
    */
   async function writeSegment(
     gameId: string,
@@ -205,12 +257,13 @@ export function createStore(backend: Backend = defaultBackend()) {
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
 
-    const closed = isRoundClosed(
-      record.entries.filter((e) => e.round === round),
-      record.results[round] ?? null,
-    );
+    const stored = record.results[round] ?? null;
+    const admin = isAdmin(record.admins, clientId);
+    if (isRoundEnded(stored) && !admin) throw new RoundEndedError();
+
+    const endedAt = stored ? stored.endedAt : null;
     const takeOver = new Set(input.takeOver ?? []);
-    const mayTouch = (entry: Entry) => closed || entry.clientId === clientId;
+    const mayTouch = (entry: Entry) => admin || entry.clientId === clientId;
 
     const segment = record.entries.filter(
       (e) => e.round === round && e.nsPair === nsPair && e.ewPair === ewPair,
@@ -270,7 +323,7 @@ export function createStore(backend: Backend = defaultBackend()) {
     if (Object.keys(updates).length > 0 || removeFields.length > 0) {
       Object.assign(
         updates,
-        resultFieldsFor(round, finalEntries, record.meta, closed),
+        resultFieldsFor(round, finalEntries, record.meta, endedAt),
       );
       await backend.write(gameKey(gameId), updates, removeFields);
     }
@@ -285,7 +338,7 @@ export function createStore(backend: Backend = defaultBackend()) {
 
   /**
    * Delete boards from a segment. While the round is open only the owning
-   * client may remove an entry; once it has closed anyone may.
+   * client may remove an entry; once an admin has ended it, only an admin may.
    */
   async function deleteEntries(
     gameId: string,
@@ -302,10 +355,10 @@ export function createStore(backend: Backend = defaultBackend()) {
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
 
-    const closed = isRoundClosed(
-      record.entries.filter((e) => e.round === round),
-      record.results[round] ?? null,
-    );
+    const stored = record.results[round] ?? null;
+    const admin = isAdmin(record.admins, clientId);
+    if (isRoundEnded(stored) && !admin) throw new RoundEndedError();
+    const endedAt = stored ? stored.endedAt : null;
 
     const removable = record.entries.filter(
       (e) =>
@@ -313,7 +366,7 @@ export function createStore(backend: Backend = defaultBackend()) {
         e.nsPair === nsPair &&
         e.ewPair === ewPair &&
         boards.includes(e.board) &&
-        (closed || e.clientId === clientId),
+        (admin || e.clientId === clientId),
     );
 
     if (removable.length > 0) {
@@ -327,7 +380,7 @@ export function createStore(backend: Backend = defaultBackend()) {
 
       await backend.write(
         gameKey(gameId),
-        resultFieldsFor(round, nextEntries, record.meta, closed),
+        resultFieldsFor(round, nextEntries, record.meta, endedAt),
         remove,
       );
     }
@@ -353,10 +406,10 @@ export function createStore(backend: Backend = defaultBackend()) {
     const record = await readRecord(gameId);
     if (!record) throw new Error("Game not found");
 
-    const closed = isRoundClosed(
-      record.entries.filter((e) => e.round === round),
-      record.results[round] ?? null,
-    );
+    const stored = record.results[round] ?? null;
+    const admin = isAdmin(record.admins, clientId);
+    if (isRoundEnded(stored) && !admin) throw new RoundEndedError();
+    const endedAt = stored ? stored.endedAt : null;
 
     const moving = record.entries.filter(
       (e) =>
@@ -385,9 +438,77 @@ export function createStore(backend: Backend = defaultBackend()) {
 
     Object.assign(
       updates,
-      resultFieldsFor(round, nextEntries, record.meta, closed),
+      resultFieldsFor(round, nextEntries, record.meta, endedAt),
     );
     await backend.write(gameKey(gameId), updates, remove);
+
+    return (await loadGame(gameId))!;
+  }
+
+  /**
+   * Take admin on a game.
+   *
+   * The link is the only access control this app has ever had, so claiming is
+   * open to anyone holding it - until an admin closes it, which is the point
+   * at which the directors have themselves and a stranger cannot join them.
+   * Idempotent: claiming twice rewrites the same field.
+   */
+  async function claimAdmin(gameId: string, clientId: string): Promise<GameRecord> {
+    if (!isValidClientId(clientId)) throw new Error("No session to claim admin with.");
+
+    const record = await readRecord(gameId);
+    if (!record) throw new Error("Game not found");
+
+    if (!record.claimingOpen && !isAdmin(record.admins, clientId)) {
+      throw new NotAdminError("Admin claiming is closed for this game.");
+    }
+
+    await backend.write(gameKey(gameId), {
+      [adminField(clientId)]: JSON.stringify({ claimedAt: new Date().toISOString() }),
+    });
+
+    return (await loadGame(gameId))!;
+  }
+
+  /** Open or close admin claiming. Admin only. */
+  async function setClaiming(
+    gameId: string,
+    clientId: string,
+    open: boolean,
+  ): Promise<GameRecord> {
+    const record = await readRecord(gameId);
+    if (!record) throw new Error("Game not found");
+    if (!isAdmin(record.admins, clientId)) throw new NotAdminError();
+
+    await backend.write(gameKey(gameId), { [CLAIMING_FIELD]: open ? "open" : "closed" });
+
+    return (await loadGame(gameId))!;
+  }
+
+  /**
+   * End a round: score it, reveal every entry, and narrow editing to admins.
+   *
+   * Writing the result is the latch, so this is one-way and doing it twice
+   * changes nothing. It deliberately does not insist on a full card - an admin
+   * may end a short round, and the gap shows up as a `board-mismatch` on the
+   * scoresheet, which is more use than a button that refuses to work while
+   * everyone waits for a table that never reported.
+   */
+  async function endRound(
+    gameId: string,
+    clientId: string,
+    round: number,
+  ): Promise<GameRecord> {
+    const record = await readRecord(gameId);
+    if (!record) throw new Error("Game not found");
+    if (!isAdmin(record.admins, clientId)) throw new NotAdminError();
+
+    if (!isRoundEnded(record.results[round] ?? null)) {
+      await backend.write(
+        gameKey(gameId),
+        resultFieldsFor(round, record.entries, record.meta, new Date().toISOString()),
+      );
+    }
 
     return (await loadGame(gameId))!;
   }
@@ -398,6 +519,9 @@ export function createStore(backend: Backend = defaultBackend()) {
     writeSegment,
     deleteEntries,
     repointSegment,
+    claimAdmin,
+    setClaiming,
+    endRound,
     gameExists: (id: string) => backend.exists(gameKey(id)),
   };
 }

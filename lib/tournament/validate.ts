@@ -1,5 +1,6 @@
 import {
   BOARDS_PER_SEGMENT,
+  ENTRIES_PER_ROUND,
   type Entry,
   type GameMeta,
   type PairId,
@@ -17,7 +18,8 @@ export type IssueCode =
   | "pair-in-too-many-segments"
   | "board-mismatch"
   | "wrong-segment-count"
-  | "wrong-board-count";
+  | "wrong-board-count"
+  | "round-incomplete";
 
 export interface ValidationIssue {
   code: IssueCode;
@@ -46,6 +48,18 @@ export function validateRound(entries: Entry[], meta: GameMeta): ValidationIssue
   const segLabel = (nsPair: PairId, ewPair: PairId) => `${pair(nsPair)} NS vs ${pair(ewPair)} EW`;
 
   const segments = groupSegments(entries);
+
+  // A round is only ever validated once an admin has ended it, so a short card
+  // here means it was ended before every table reported. A whole missing
+  // segment produces no matchup at all, and therefore no `board-mismatch` -
+  // without this the round would score zero for two teams and say nothing.
+  if (entries.length < ENTRIES_PER_ROUND) {
+    issues.push({
+      code: "round-incomplete",
+      severity: "error",
+      message: `This round has ${entries.length} of ${ENTRIES_PER_ROUND} boards. Anything a missing table would have scored is not in these results.`,
+    });
+  }
 
   for (const segment of segments) {
     const label = segLabel(segment.nsPair, segment.ewPair);

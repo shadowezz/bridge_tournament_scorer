@@ -4,7 +4,7 @@ import { flipMatchup } from "@/lib/tournament/perspective";
 import { negate } from "@/lib/types";
 import { completeRound, meta } from "./fixtures";
 
-const round = computeRound(1, completeRound(), meta);
+const round = computeRound(1, completeRound(), meta, "2026-08-28T01:00:00.000Z");
 const ab = round.matchups.find((m) => m.key === "A-B")!;
 
 describe("flipMatchup", () => {

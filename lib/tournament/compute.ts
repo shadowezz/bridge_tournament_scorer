@@ -44,6 +44,8 @@ export interface MatchupResult {
 
 export interface RoundResult {
   round: number;
+  /** When an admin ended the round. Fixed; survives every later recompute. */
+  endedAt: string;
   computedAt: string;
   sourceDigest: string;
   status: "complete" | "unresolved";
@@ -69,30 +71,28 @@ export function digestEntries(entries: Entry[]): string {
 }
 
 /**
- * A round closes once every board has been entered. The check is a plain
- * count rather than a structural one on purpose: if the pairings were
- * entered wrongly the structure will not form, and gating on structure
- * would leave the round permanently open with nobody able to see why.
+ * Whether every board of a round has been entered. The check is a plain count
+ * rather than a structural one on purpose: if the pairings were entered
+ * wrongly the structure will not form, and gating on structure would leave the
+ * round looking unfinished with nobody able to see why.
+ *
+ * This no longer ends the round - an admin does that - so it only says the
+ * round looks ready to end.
  */
 export function isRoundComplete(entries: Entry[]): boolean {
   return entries.length >= ENTRIES_PER_ROUND;
 }
 
 /**
- * Whether a round is closed to the visibility rules and open to everyone's
- * edits.
+ * Whether an admin has ended the round, which is what reveals every entry and
+ * narrows editing to admins.
  *
- * Closure latches: a round that has ever been full stays closed even if a
- * board is later deleted. The stored result is the latch - it is written the
- * first time the round fills up and never removed - because reopening a round
- * mid-tournament would re-mask entries everyone has already seen and pull the
- * scoresheets out from under them.
+ * The stored result is the latch - it is written when the round is ended and
+ * never removed - so ending is one-way. Reopening a round mid-tournament
+ * cannot un-reveal results everyone has already seen, so it is not offered.
  */
-export function isRoundClosed(
-  entries: Entry[],
-  result: RoundResult | null | undefined,
-): boolean {
-  return isRoundComplete(entries) || Boolean(result);
+export function isRoundEnded(result: RoundResult | null | undefined): boolean {
+  return Boolean(result);
 }
 
 function scoreMatchup(matchup: ReturnType<typeof groupMatchups>[number]): MatchupResult | null {
@@ -156,8 +156,18 @@ function scoreMatchup(matchup: ReturnType<typeof groupMatchups>[number]): Matchu
   };
 }
 
-/** Score a whole round: every matchup, its victory points, and the team totals. */
-export function computeRound(round: number, entries: Entry[], meta: GameMeta): RoundResult {
+/**
+ * Score a whole round: every matchup, its victory points, and the team totals.
+ *
+ * `endedAt` is when the admin ended the round. Recomputing after a correction
+ * passes the stored value back in, so it stays put while `computedAt` moves.
+ */
+export function computeRound(
+  round: number,
+  entries: Entry[],
+  meta: GameMeta,
+  endedAt: string,
+): RoundResult {
   const validation = validateRound(entries, meta);
   const matchups = groupMatchups(entries)
     .map(scoreMatchup)
@@ -176,6 +186,7 @@ export function computeRound(round: number, entries: Entry[], meta: GameMeta): R
 
   return {
     round,
+    endedAt,
     computedAt: new Date().toISOString(),
     sourceDigest: digestEntries(entries),
     status: hasErrors ? "unresolved" : "complete",

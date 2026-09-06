@@ -38,7 +38,13 @@ interface Props {
   seeds: RowSeed[];
   /** Boards in this segment entered by another client. */
   lockedBoards: number[];
-  roundClosed: boolean;
+  roundEnded: boolean;
+  /**
+   * Show the segment without any way to change it. The same rows render, so
+   * the contract formatting is not duplicated anywhere - they are simply
+   * disabled, with no Remove, no take-over and no Save.
+   */
+  readOnly: boolean;
 }
 
 /** Parse a contract for the live echo, without throwing on half-typed input. */
@@ -65,7 +71,7 @@ function preview(text: string): { label: string; score: number | null; error: st
 }
 
 export function SegmentForm(props: Props) {
-  const { gameId, round, meta, seeds, lockedBoards, roundClosed } = props;
+  const { gameId, round, meta, seeds, lockedBoards, roundEnded, readOnly } = props;
 
   const [state, action, pending] = useActionState(saveSegment, emptySubmission);
   const [rows, setRows] = useState<RowState[]>(() => {
@@ -136,22 +142,33 @@ export function SegmentForm(props: Props) {
     return new Set([...counts].filter(([, n]) => n > 1).map(([board]) => board));
   }, [submittedBoards]);
 
+  // Read-only, the blank rows are just empty boxes nobody can fill.
+  const shown = readOnly ? rows.filter((row) => row.origBoard !== null) : rows;
+
+  if (readOnly && shown.length === 0) {
+    return <p className="muted">No boards were entered at this table.</p>;
+  }
+
   return (
-    <form action={action} className="stack">
-      <input type="hidden" name="gameId" value={gameId} />
-      <input type="hidden" name="round" value={round} />
-      <input type="hidden" name="nsPair" value={props.nsPair} />
-      <input type="hidden" name="ewPair" value={props.ewPair} />
-      <input type="hidden" name="takeOver" value={takeOver.join(",")} />
+    <form action={readOnly ? undefined : action} className="stack">
+      {!readOnly && (
+        <>
+          <input type="hidden" name="gameId" value={gameId} />
+          <input type="hidden" name="round" value={round} />
+          <input type="hidden" name="nsPair" value={props.nsPair} />
+          <input type="hidden" name="ewPair" value={props.ewPair} />
+          <input type="hidden" name="takeOver" value={takeOver.join(",")} />
+        </>
+      )}
 
       <div className="stack">
-        {rows.map((row, index) => {
+        {shown.map((row, index) => {
           const boardNumber = Number(row.board);
           const claimedByOther = isClaimedByOther({
             board: boardNumber,
             lockedBoards,
             takeOver,
-            roundClosed,
+            roundEnded,
           });
 
           const parsed = claimedByOther ? null : preview(row.contract);
@@ -177,7 +194,8 @@ export function SegmentForm(props: Props) {
                     aria-invalid={duplicated}
                     // Disabled inputs submit nothing, which is how both a
                     // marked row and someone else's row stay out of the save.
-                    disabled={claimedByOther || row.removing}
+                    disabled={readOnly || claimedByOther || row.removing}
+                    readOnly={readOnly}
                     style={row.removing ? { textDecoration: "line-through" } : undefined}
                   />
                 </div>
@@ -193,12 +211,13 @@ export function SegmentForm(props: Props) {
                     autoComplete="off"
                     autoCapitalize="characters"
                     spellCheck={false}
-                    disabled={claimedByOther || row.removing}
+                    disabled={readOnly || claimedByOther || row.removing}
+                    readOnly={readOnly}
                     style={row.removing ? { textDecoration: "line-through" } : undefined}
                   />
                 </div>
 
-                {row.origBoard !== null && !claimedByOther && (
+                {row.origBoard !== null && !claimedByOther && !readOnly && (
                   <button
                     type="button"
                     className="link"
@@ -227,7 +246,7 @@ export function SegmentForm(props: Props) {
                   <span className="muted" style={{ color: "var(--danger)" }}>
                     Marked for deletion — press Keep to change your mind.
                   </span>
-                ) : claimedByOther ? (
+                ) : claimedByOther && !readOnly ? (
                   <span className="muted">
                     Already entered by someone else at your table.{" "}
                     <button
@@ -254,16 +273,16 @@ export function SegmentForm(props: Props) {
         })}
       </div>
 
-      {dropped.length > 0 && (
+      {!readOnly && dropped.length > 0 && (
         <p className="notice warn">
           Saving will delete board {dropped.join(", ")} from this table.{" "}
-          {roundClosed
-            ? "The round stays closed, but the scoresheet will flag the missing board."
+          {roundEnded
+            ? "The round stays ended, but the scoresheet will flag the missing board."
             : "You can enter it again afterwards."}
         </p>
       )}
 
-      {flash && (
+      {!readOnly && flash && (
         <p
           className={`notice ${flash.ok ? "info fading" : "error"}`}
           onAnimationEnd={() => setFlash(null)}
@@ -272,14 +291,16 @@ export function SegmentForm(props: Props) {
         </p>
       )}
 
-      <div className="row">
-        <button type="submit" disabled={pending || duplicates.size > 0}>
-          {pending ? "Saving…" : "Save results"}
-        </button>
-        <span className="muted">
-          Type the contract as <code>4HxN+1</code> — level, suit, doubles, declarer, result.
-        </span>
-      </div>
+      {!readOnly && (
+        <div className="row">
+          <button type="submit" disabled={pending || duplicates.size > 0}>
+            {pending ? "Saving…" : "Save results"}
+          </button>
+          <span className="muted">
+            Type the contract as <code>4HxN+1</code> — level, suit, doubles, declarer, result.
+          </span>
+        </div>
+      )}
     </form>
   );
 }

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { store } from "@/lib/store";
 import { clientId } from "@/lib/session";
+import { isAdmin } from "@/lib/admin";
 import { isFullEntry, segmentView, visibleRound } from "@/lib/visibility";
 import { formatContract } from "@/lib/bridge/contract";
 import { validateSegmentPairing } from "@/lib/tournament/validate";
@@ -10,6 +11,7 @@ import { ROUNDS, pairLabel, type PairId } from "@/lib/types";
 import { PairPicker } from "@/components/PairPicker";
 import { SegmentForm, type RowSeed } from "@/components/SegmentForm";
 import { RefreshButton } from "@/components/RefreshButton";
+import { EndRoundButton } from "@/components/EndRoundButton";
 
 interface Props {
   params: Promise<{ gameId: string; round: string }>;
@@ -28,6 +30,10 @@ export default async function RoundPage({ params, searchParams }: Props) {
   const me = await clientId();
 
   const view = visibleRound(round, record.entries, record.results[round] ?? null, me);
+  const admin = isAdmin(record.admins, me);
+  // An ended round is frozen to everyone but an admin - including the boards
+  // you entered yourself.
+  const readOnly = view.ended && !admin;
 
   const knownPair = (id: string): id is PairId => record.meta.pairs.some((p) => p.id === id);
   const nsPair = knownPair(ns) ? ns : "";
@@ -53,24 +59,37 @@ export default async function RoundPage({ params, searchParams }: Props) {
       <div className="spread">
         <h2 style={{ marginTop: 0 }}>Round {round}</h2>
         <div className="row">
-          <span className={`badge ${view.complete ? "" : "open"}`}>
+          <span className={`badge ${view.ended ? "" : "open"}`}>
             {view.entryCount} / {view.expectedCount} boards
           </span>
+          {view.ended && <span className="badge">Ended</span>}
+          {!view.ended && admin && (
+            <EndRoundButton gameId={gameId} round={round} full={view.full} />
+          )}
           <RefreshButton />
         </div>
       </div>
 
-      {view.complete ? (
-        <p className="notice info">
-          This round is closed — every board is in.{" "}
-          <Link href={`/g/${gameId}/results/${round}`}>See the scoresheets</Link>. Anyone can
-          correct or remove a board here now and the scores follow; the round stays closed
-          either way, and a removed board is flagged on the scoresheet.
-        </p>
+      {view.ended ? (
+        admin ? (
+          <p className="notice info">
+            This round has ended.{" "}
+            <Link href={`/g/${gameId}/results/${round}`}>See the scoresheets</Link>. As an admin
+            you can still correct or remove any board here and the scores follow; the round
+            stays ended either way, and a removed board is flagged on the scoresheet.
+          </p>
+        ) : (
+          <p className="notice info">
+            This round has ended, so the boards are view-only — including the ones you entered.{" "}
+            <Link href={`/g/${gameId}/results/${round}`}>See the scoresheets</Link>, and ask an
+            admin if something needs correcting.
+          </p>
+        )
       ) : (
         <p className="muted">
-          While the round is open you only see boards you entered yourself. Everything opens up
-          once all {view.expectedCount} boards are in.
+          While the round is running you only see boards you entered yourself. Everything opens
+          up when an admin ends the round
+          {view.full ? " — all " + view.expectedCount + " boards are in, so it is ready." : "."}
         </p>
       )}
 
@@ -101,12 +120,13 @@ export default async function RoundPage({ params, searchParams }: Props) {
             ewPair={ewPair}
             seeds={seeds}
             lockedBoards={lockedBoards}
-            roundClosed={view.complete}
+            roundEnded={view.ended}
+            readOnly={readOnly}
           />
         </>
       ) : (
         <p className="muted" style={{ marginTop: "1rem" }}>
-          Pick both pairs to enter this table&rsquo;s six boards.
+          Pick both pairs to {readOnly ? "see" : "enter"} this table&rsquo;s six boards.
         </p>
       )}
     </>

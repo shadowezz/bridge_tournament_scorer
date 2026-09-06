@@ -24,12 +24,13 @@ export default async function ResultsPage({ params }: Props) {
   const record = (await store().loadGame(gameId))!;
   const view = visibleRound(round, record.entries, record.results[round] ?? null, await clientId());
 
-  if (!view.complete || !view.result) {
+  if (!view.ended || !view.result) {
     return (
       <>
         <h2 style={{ marginTop: 0 }}>Round {round}</h2>
         <p className="notice warn">
-          Results appear once all {view.expectedCount} boards are in. {view.entryCount} so far.
+          Results appear once an admin ends this round. {view.entryCount} of{" "}
+          {view.expectedCount} boards are in.
         </p>
         <Link href={`/g/${gameId}/round/${round}`}>Enter results</Link>
       </>
@@ -76,8 +77,10 @@ export default async function ResultsPage({ params }: Props) {
       </div>
 
       <p className="muted" style={{ marginTop: "1rem" }}>
-        Scored <LocalTime iso={result.computedAt} />.{" "}
-        <Link href={`/g/${gameId}/round/${round}`}>Correct an entry</Link> if something looks wrong.
+        Round ended <LocalTime iso={result.endedAt} />, last scored{" "}
+        <LocalTime iso={result.computedAt} />.{" "}
+        <Link href={`/g/${gameId}/round/${round}`}>See the boards</Link> if something looks
+        wrong — an admin can correct them.
       </p>
     </>
   );

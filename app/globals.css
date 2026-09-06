@@ -146,3 +146,14 @@ tfoot td { font-weight: 700; border-bottom: none; }
 .nav a[aria-current="page"] { background: var(--accent); color: #fff; border-color: transparent; }
 
 code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+
+dialog {
+  max-width: min(26rem, calc(100vw - 2rem));
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
+dialog::backdrop { background: rgb(0 0 0 / .45); }
+dialog p:last-of-type { margin-bottom: 1rem; }

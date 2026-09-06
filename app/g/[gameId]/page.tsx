@@ -7,6 +7,8 @@ import { visibleGame } from "@/lib/visibility";
 import { Standings } from "@/components/Standings";
 import { RefreshButton } from "@/components/RefreshButton";
 import { ShareLink } from "@/components/ShareLink";
+import { AdminPanel } from "@/components/AdminPanel";
+import { EndRoundButton } from "@/components/EndRoundButton";
 
 export default async function GamePage({ params }: { params: Promise<{ gameId: string }> }) {
   // Results change outside this render, so never serve a cached page.
@@ -16,9 +18,9 @@ export default async function GamePage({ params }: { params: Promise<{ gameId: s
   const record = (await store().loadGame(gameId))!;
   const view = visibleGame(record, await clientId());
 
-  const closed = view.rounds.filter((round) => round.complete);
+  const ended = view.rounds.filter((round) => round.ended);
   const table = standings(
-    closed.map((round) => round.result!).filter(Boolean),
+    ended.map((round) => round.result!).filter(Boolean),
     record.meta,
   );
 
@@ -37,8 +39,8 @@ export default async function GamePage({ params }: { params: Promise<{ gameId: s
           <div key={round.round} className="card">
             <div className="spread">
               <h3 style={{ margin: 0 }}>Round {round.round}</h3>
-              {round.complete ? (
-                <span className="badge">Closed</span>
+              {round.ended ? (
+                <span className="badge">Ended</span>
               ) : round.entryCount > 0 ? (
                 <span className="badge open">In progress</span>
               ) : (
@@ -48,21 +50,39 @@ export default async function GamePage({ params }: { params: Promise<{ gameId: s
 
             <p className="muted">
               {round.entryCount} of {round.expectedCount} boards in
+              {!round.ended && round.full && (
+                <>
+                  <br />
+                  All boards in — waiting for an admin to end the round.
+                </>
+              )}
             </p>
 
             <div className="row">
-              <Link href={`/g/${gameId}/round/${round.round}`}>Enter results</Link>
-              {round.complete && <Link href={`/g/${gameId}/results/${round.round}`}>Scoresheets</Link>}
+              <Link href={`/g/${gameId}/round/${round.round}`}>
+                {round.ended ? "Board results" : "Enter results"}
+              </Link>
+              {round.ended && <Link href={`/g/${gameId}/results/${round.round}`}>Scoresheets</Link>}
             </div>
+
+            {view.isAdmin && !round.ended && (
+              <div className="row" style={{ marginTop: ".75rem" }}>
+                <EndRoundButton gameId={gameId} round={round.round} full={round.full} />
+              </div>
+            )}
           </div>
         ))}
       </div>
 
+      <h2>Admin</h2>
+      <AdminPanel gameId={gameId} view={view} />
+
       <h2>Share</h2>
       <ShareLink />
       <p className="muted">
-        Anyone with this link can enter and view results. While a round is open you only see
-        the boards you entered yourself.
+        Anyone with this link can enter and view results. Until an admin ends a round you only
+        see the boards you entered yourself; after that everything is public and only admins
+        can change it.
       </p>
     </>
   );

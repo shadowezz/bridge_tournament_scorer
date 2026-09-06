@@ -8,7 +8,7 @@ function form(values: Record<string, string>): FormData {
 }
 
 describe("isClaimedByOther", () => {
-  const base = { lockedBoards: [3, 4], takeOver: [] as number[], roundClosed: false };
+  const base = { lockedBoards: [3, 4], takeOver: [] as number[], roundEnded: false };
 
   it("locks a board entered by someone else at the table", () => {
     expect(isClaimedByOther({ ...base, board: 3 })).toBe(true);
@@ -23,7 +23,7 @@ describe("isClaimedByOther", () => {
   });
 
   it("unlocks everything once the round has closed", () => {
-    expect(isClaimedByOther({ ...base, board: 3, roundClosed: true })).toBe(false);
+    expect(isClaimedByOther({ ...base, board: 3, roundEnded: true })).toBe(false);
   });
 
   it("does not lock a row whose board number is not yet typed", () => {

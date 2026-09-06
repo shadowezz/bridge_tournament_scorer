@@ -20,15 +20,19 @@ export const emptySubmission: SegmentSubmission = { ok: false, errors: {}, confl
  * not submitted, which is what makes the server skip the row entirely - if only
  * the contract were disabled, the row would post a board number with no
  * contract and the whole save would be rejected.
+ *
+ * An ended round hides nothing, so nothing reads as claimed by someone else.
+ * Only admins have an editable form by then; everyone else's is read-only and
+ * never consults this.
  */
 export function isClaimedByOther(input: {
   board: number;
   lockedBoards: readonly number[];
   takeOver: readonly number[];
-  roundClosed: boolean;
+  roundEnded: boolean;
 }): boolean {
-  const { board, lockedBoards, takeOver, roundClosed } = input;
-  if (roundClosed) return false;
+  const { board, lockedBoards, takeOver, roundEnded } = input;
+  if (roundEnded) return false;
   if (!Number.isInteger(board)) return false;
   return lockedBoards.includes(board) && !takeOver.includes(board);
 }

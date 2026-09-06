@@ -1,5 +1,6 @@
 import { ENTRIES_PER_ROUND, ROUNDS, type Entry, type GameMeta, type MaskedEntry } from "@/lib/types";
-import { isRoundClosed } from "@/lib/tournament/compute";
+import { isRoundComplete, isRoundEnded } from "@/lib/tournament/compute";
+import { isAdmin } from "@/lib/admin";
 import type { RoundResult } from "@/lib/tournament/compute";
 import type { GameRecord } from "@/lib/store";
 
@@ -11,7 +12,10 @@ export const isFullEntry = (entry: VisibleEntry): entry is Entry => !("masked" i
 
 export interface VisibleRound {
   round: number;
-  complete: boolean;
+  /** An admin has ended this round: results are public and frozen to admins. */
+  ended: boolean;
+  /** Every board is in. Says the round looks ready to end, nothing more. */
+  full: boolean;
   entries: VisibleEntry[];
   entryCount: number;
   expectedCount: number;
@@ -21,6 +25,10 @@ export interface VisibleRound {
 export interface VisibleGame {
   meta: GameMeta;
   clientId: string;
+  /** Whether this client holds admin. The admin ids themselves never ship. */
+  isAdmin: boolean;
+  adminCount: number;
+  claimingOpen: boolean;
   rounds: VisibleRound[];
 }
 
@@ -45,11 +53,13 @@ function mask(entry: Entry): MaskedEntry {
 /**
  * Decide what one client may see of one round.
  *
- * While a round is open a client sees only what it submitted itself; every
- * other board is masked. A pair's own boards in isolation reveal nothing,
- * because scoring a board needs the other table's result too. Once the round
- * closes, it is all public - and it stays closed, so deleting a board later
- * does not put the genie back in the bottle.
+ * Until an admin ends the round a client sees only what it submitted itself;
+ * every other board is masked, admins included - admin is the power to end a
+ * round and correct it afterwards, not to peek at one in progress. A pair's
+ * own boards in isolation reveal nothing, because scoring a board needs the
+ * other table's result too. Once the round is ended it is all public, and it
+ * stays ended, so deleting a board later does not put the genie back in
+ * the bottle.
  */
 export function visibleRound(
   round: number,
@@ -58,25 +68,34 @@ export function visibleRound(
   clientId: string,
 ): VisibleRound {
   const forRound = entries.filter((e) => e.round === round);
-  const complete = isRoundClosed(forRound, result);
+  const ended = isRoundEnded(result);
 
   return {
     round,
-    complete,
-    entries: complete ? forRound : forRound.map((e) => (e.clientId === clientId ? e : mask(e))),
+    ended,
+    full: isRoundComplete(forRound),
+    entries: ended ? forRound : forRound.map((e) => (e.clientId === clientId ? e : mask(e))),
     entryCount: forRound.length,
     expectedCount: ENTRIES_PER_ROUND,
-    // A result only exists for a closed round, but never serve one for an
-    // open round even if a stale field somehow survived.
-    result: complete ? result : null,
+    // A result only exists for an ended round, but never serve one for a round
+    // still running even if a stale field somehow survived.
+    result: ended ? result : null,
   };
 }
 
-/** Apply the visibility rules across a whole game. */
+/**
+ * Apply the visibility rules across a whole game.
+ *
+ * `record.admins` stops here: a client id is a bearer credential, so the page
+ * gets a boolean and a count and never the ids themselves.
+ */
 export function visibleGame(record: GameRecord, clientId: string): VisibleGame {
   return {
     meta: record.meta,
     clientId,
+    isAdmin: isAdmin(record.admins, clientId),
+    adminCount: record.admins.length,
+    claimingOpen: record.claimingOpen,
     rounds: ROUNDS.map((round) =>
       visibleRound(round, record.entries, record.results[round] ?? null, clientId),
     ),

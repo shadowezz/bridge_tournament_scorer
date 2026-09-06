@@ -116,9 +116,9 @@ reads, so it is made durable:
 - Shown as a copyable recovery code with a "restore session" field, for the cases
   that cannot be automated (a different phone).
 
-**The damage from losing it is bounded**: you are blinded only for the remainder
-of the current round. Once the round closes everything is public and editable, so
-typo fixes remain possible. It is an annoyance, not data loss.
+**The damage from losing it is bounded**: you are blinded only until an admin ends
+the round, after which everything is public. Losing it also drops any admin you
+hold, since admin is held by client id — see *Admins and ending a round*.
 
 ### Read rules — enforced server-side, never by hiding data in the browser
 
@@ -132,17 +132,43 @@ For an **open** round the server returns:
 Selecting a pair therefore reveals nothing; a misclicked dropdown shows at most
 which board numbers exist.
 
-For a **closed** round (36 boards in) and for standings, everything is visible to
-everyone.
+For an **ended** round (an admin pressed End round) and for standings, everything
+is visible to everyone. Reaching 36 boards does **not** do this on its own, and
+admins get no early sight — they see exactly what any player sees until they end
+the round.
 
 ### Write rules
+
+While the round is running:
 
 - You may edit or delete only entries you own.
 - A board marked `already entered` offers **"enter it myself instead"** — an
   explicit action that overwrites and transfers ownership without ever displaying
   the previous value. This is the escape hatch for a partner's typo mid-round.
 - You may repoint your own segment's pairing if the dropdowns were wrong.
-- Editing after close is unrestricted and triggers a full recompute.
+
+Once an admin has ended it, the round is frozen to everyone but an admin —
+including the boards you entered yourself, which render read-only. An admin may
+touch any board, and every edit triggers a full recompute.
+
+### Admins and ending a round
+
+Admin is held by client id, one `admin|<clientId>` field per holder so two people
+claiming at once cannot clobber each other. Several people can hold it.
+
+- **Claiming** is open to anyone with the link, which has always been this app's
+  only access control. What stops a passer-by is an admin turning claiming off;
+  it is a toggle, so a latecomer can still be let in.
+- **No revoke, and no reopening an ended round.** Together these mean a game can
+  never end up locked with zero admins, so no lockout safeguard is needed.
+  Ending is one-way because reopening cannot un-reveal results people have seen.
+- `record.admins` **never leaves the server**. A client id is a bearer
+  credential — the session box accepts any code and becomes it — so `visibleGame`
+  reduces it to `isAdmin` and `adminCount` before anything renders.
+- An admin may end a **short** round. Refusing would leave everyone waiting on a
+  table that never reported; instead `validateRound` raises `round-incomplete`,
+  because a whole missing segment yields no matchup and therefore no
+  `board-mismatch` of its own.
 
 ---
 
@@ -172,7 +198,7 @@ so the message names both:
 `same-team-ns-twice` and `repeated-pair-in-matchup` matter most: they are the ones
 that would otherwise produce *silently wrong* IMPs rather than an obvious error.
 
-A round that closes but fails validation is stored `status: "unresolved"`, still
+A round that is ended but fails validation is stored `status: "unresolved"`, still
 shows its results — it really is over — behind a prominent banner, and **excludes
 unmatched boards from the IMPs** rather than scoring them.
 
@@ -202,10 +228,11 @@ defence.
 
 ## Persisted round results
 
-When a round closes the full result is computed once and stored:
+When an admin ends a round the full result is computed once and stored. Writing
+this field *is* the ending — it is the latch, and nothing else creates one:
 
 ```
-r<n>|result → { computedAt, sourceDigest, status, validation,
+r<n>|result → { endedAt, computedAt, sourceDigest, status, validation,
                 matchups: [ { teams, boards[], impsHome, impsAway,
                               vpHome, vpAway } ],
                 teamVp, entryCount }
@@ -218,9 +245,11 @@ would silently restate rounds already played and agreed. The stored `boards[]`
 also *is* the scoresheet, so rendering reads one field rather than re-deriving.
 
 **Propagation.** Every mutation routes through one store function —
-`writeEntries`, `deleteEntries`, `repointSegment` — which recomputes and rewrites
+`writeSegment`, `deleteEntries`, `repointSegment` — which recomputes and rewrites
 `r<n>|result` in the *same* write as the entry change. There is no path that edits
-an entry without updating the result, because there is only one path.
+an entry without updating the result, because there is only one path. `endedAt`
+is carried across each recompute while `computedAt` moves, so the scoresheet can
+show both when the round ended and when it was last corrected.
 
 **Self-healing.** `sourceDigest` is a SHA-256 of the round's sorted entries. On
 read it is recomputed from the entries already in hand and, on mismatch, the
@@ -228,7 +257,9 @@ result is recomputed, persisted, and the discrepancy logged. An invalidation bug
 degrades into a slow path, never into wrong VPs on screen — a silently stale
 scoreboard is the one failure nobody would catch during a live tournament.
 
-Dropping below a full card deletes the stored result rather than leaving it stale.
+Dropping below a full card keeps the result: ending latches, so a board deleted
+afterwards is recomputed and surfaces as `board-mismatch` and `round-incomplete`
+on the scoresheet rather than as a round that silently reopened.
 
 ---
 
@@ -364,7 +395,7 @@ trapped inside server actions.
 | Masked rows | 6 rows, both inputs disabled, take-over offered |
 | Take-over transfers ownership | Board 13 → requester at 1860; other five untouched |
 | Close round, scoresheets | Matches `example_scoresheet.png` column for column |
-| Edit a closed round | IMPs 19–7 → 7–11, VP 13.24 → 8.92, standings reordered |
+| Edit an ended round (as admin) | IMPs 19–7 → 7–11, VP 13.24 → 8.92, standings reordered |
 | Board typo | Both segments named, boards 5 and 16 excluded, banner clears on fix |
 | Changing pairs resets the form | Rows, unsaved text, taken-over boards and save message all clear; masked state recomputed for the new segment |
 | Perspective toggle, clean production build | Caption, block headers, IMP columns, VP and every board mirror; each matchup toggles independently |

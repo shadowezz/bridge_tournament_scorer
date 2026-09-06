@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { store } from "@/lib/store";
+import { RoundEndedError, store } from "@/lib/store";
 import { validateSegmentPairing } from "@/lib/tournament/validate";
 import { clientId } from "@/lib/session";
 import { buildGameMeta } from "@/lib/tournament/setup";
@@ -55,14 +55,27 @@ export async function saveSegment(
     };
   }
 
-  const { conflicts, removed } = await store().writeSegment(gameId, {
-    round,
-    nsPair,
-    ewPair,
-    rows,
-    clientId: await clientId(),
-    takeOver,
-  });
+  let outcome;
+  try {
+    outcome = await store().writeSegment(gameId, {
+      round,
+      nsPair,
+      ewPair,
+      rows,
+      clientId: await clientId(),
+      takeOver,
+    });
+  } catch (error) {
+    // The form renders read-only once a round ends, so this only fires for a
+    // page that was already open when an admin ended it.
+    if (error instanceof RoundEndedError) {
+      revalidatePath(`/g/${gameId}`, "layout");
+      return { ok: false, errors: {}, conflicts: [], message: error.message };
+    }
+    throw error;
+  }
+
+  const { conflicts, removed } = outcome;
 
   revalidatePath(`/g/${gameId}`, "layout");
 
@@ -109,5 +122,34 @@ export async function repointSegment(
   to: { nsPair: string; ewPair: string },
 ): Promise<void> {
   await store().repointSegment(gameId, { round, from, to, clientId: await clientId() });
+  revalidatePath(`/g/${gameId}`, "layout");
+}
+
+/**
+ * Take admin on this game.
+ *
+ * These three take `FormData` so the admin panel can be plain server-rendered
+ * forms - the buttons work with no client JavaScript at all, which matters on
+ * a phone at a bridge table with one bar of signal.
+ */
+export async function claimAdmin(form: FormData): Promise<void> {
+  const gameId = String(form.get("gameId") ?? "");
+  await store().claimAdmin(gameId, await clientId());
+  revalidatePath(`/g/${gameId}`, "layout");
+}
+
+/** Open or close admin claiming for this game. Admin only. */
+export async function setAdminClaiming(form: FormData): Promise<void> {
+  const gameId = String(form.get("gameId") ?? "");
+  const open = String(form.get("open") ?? "") === "true";
+  await store().setClaiming(gameId, await clientId(), open);
+  revalidatePath(`/g/${gameId}`, "layout");
+}
+
+/** Score a round, reveal it, and freeze it to admins. Admin only, one-way. */
+export async function endRound(form: FormData): Promise<void> {
+  const gameId = String(form.get("gameId") ?? "");
+  const round = Number(form.get("round") ?? 0);
+  await store().endRound(gameId, await clientId(), round);
   revalidatePath(`/g/${gameId}`, "layout");
 }

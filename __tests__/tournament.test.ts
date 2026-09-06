@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { groupMatchups, groupSegments, orientations } from "@/lib/tournament/matchups";
 import { validateRound, validateSegmentPairing } from "@/lib/tournament/validate";
-import { computeRound, digestEntries, isRoundComplete, standings } from "@/lib/tournament/compute";
+import {
+  computeRound,
+  digestEntries,
+  isRoundComplete,
+  isRoundEnded,
+  standings,
+} from "@/lib/tournament/compute";
 import { ENTRIES_PER_ROUND } from "@/lib/types";
 import { completeRound, meta, segment } from "./fixtures";
 
 const codes = (entries = completeRound()) => validateRound(entries, meta).map((i) => i.code);
+
+/** Rounds are only scored once ended, so every fixture result carries a time. */
+const ENDED_AT = "2026-08-28T01:00:00.000Z";
 
 describe("grouping", () => {
   const entries = completeRound();
@@ -41,7 +50,7 @@ describe("grouping", () => {
 });
 
 describe("computeRound - scoring a matchup", () => {
-  const result = computeRound(1, completeRound(), meta);
+  const result = computeRound(1, completeRound(), meta, ENDED_AT);
   const ab = result.matchups.find((m) => m.key === "A-B")!;
 
   it("names the four pairs from each orientation", () => {
@@ -91,24 +100,38 @@ describe("computeRound - scoring a matchup", () => {
 });
 
 describe("round completion", () => {
-  it("closes once every board is in", () => {
+  it("reads as full once every board is in", () => {
     const entries = completeRound();
     expect(entries).toHaveLength(ENTRIES_PER_ROUND);
     expect(isRoundComplete(entries)).toBe(true);
     expect(isRoundComplete(entries.slice(0, ENTRIES_PER_ROUND - 1))).toBe(false);
   });
 
-  it("closes on count even when the pairings are wrong, so problems stay visible", () => {
+  it("is full but not ended - only a stored result ends a round", () => {
+    expect(isRoundEnded(null)).toBe(false);
+    expect(isRoundEnded(undefined)).toBe(false);
+    expect(isRoundEnded(computeRound(1, completeRound(), meta, ENDED_AT))).toBe(true);
+  });
+
+  it("counts a full card even when the pairings are wrong, so problems stay visible", () => {
     const entries = completeRound();
     for (const e of entries.filter((e) => e.nsPair === "B2" && e.ewPair === "A2")) {
       e.nsPair = "B1";
     }
     expect(isRoundComplete(entries)).toBe(true);
-    expect(computeRound(1, entries, meta).status).toBe("unresolved");
+    expect(computeRound(1, entries, meta, ENDED_AT).status).toBe("unresolved");
   });
 });
 
 describe("validateRound", () => {
+  it("flags a round ended before every table reported", () => {
+    // Dropping a whole segment leaves its matchup with one orientation, which
+    // scores nothing and produces no board-mismatch of its own.
+    const short = completeRound().filter((e) => !(e.nsPair === "C2" && e.ewPair === "B1"));
+    expect(codes(short)).toContain("round-incomplete");
+    expect(codes()).not.toContain("round-incomplete");
+  });
+
   it("passes a clean round", () => {
     expect(codes()).toEqual([]);
   });
@@ -176,7 +199,7 @@ describe("unmatched boards are excluded rather than silently scored", () => {
     const entries = completeRound();
     entries.find((e) => e.nsPair === "B2" && e.ewPair === "A2" && e.board === 5)!.board = 15;
 
-    const ab = computeRound(1, entries, meta).matchups.find((m) => m.key === "A-B")!;
+    const ab = computeRound(1, entries, meta, ENDED_AT).matchups.find((m) => m.key === "A-B")!;
     expect(ab.boards.map((b) => b.board)).toEqual([1, 2, 3, 4, 6]);
     expect(ab.excludedBoards).toEqual([5, 15]);
     // Board 5 was worth 12 IMPs to the home team; it must not be counted.
@@ -207,7 +230,7 @@ describe("digestEntries", () => {
 
 describe("standings", () => {
   it("accumulates victory points across rounds and ranks by total", () => {
-    const results = [1, 2, 3].map((r) => computeRound(r, completeRound(r), meta));
+    const results = [1, 2, 3].map((r) => computeRound(r, completeRound(r), meta, ENDED_AT));
     const table = standings(results, meta);
 
     // Per round: A beats B 13.24-6.76, A draws C 10-10, C beats B 12.97-7.03.
