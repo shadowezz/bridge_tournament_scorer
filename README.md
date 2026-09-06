@@ -8,7 +8,7 @@ duplicate IMPs teams, victory points. All boards are non-vulnerable.
 ```bash
 npm install
 npm run dev          # http://localhost:3000
-npm test             # 110 unit tests
+npm test             # unit tests (vitest)
 ```
 
 With no Upstash credentials set, games are stored as JSON under `data/games/`,
