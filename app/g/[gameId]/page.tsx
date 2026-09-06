@@ -31,7 +31,7 @@ export default async function GamePage({ params }: { params: Promise<{ gameId: s
         <RefreshButton />
       </div>
 
-      <Standings rows={table} meta={record.meta} />
+      <Standings rows={table} meta={record.meta} gameId={gameId} />
 
       <h2>Rounds</h2>
       <div className="grid-3">

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeRound } from "@/lib/tournament/compute";
-import { flipMatchup } from "@/lib/tournament/perspective";
-import { negate } from "@/lib/types";
+import { flipMatchup, teamMatchups } from "@/lib/tournament/perspective";
+import { negate, type TeamId } from "@/lib/types";
 import { completeRound, meta } from "./fixtures";
 
 const round = computeRound(1, completeRound(), meta, "2026-08-28T01:00:00.000Z");
@@ -84,5 +84,61 @@ describe("flipMatchup", () => {
       expect(flipMatchup(flipMatchup(matchup))).toEqual(matchup);
       expect(flipMatchup(matchup).impsHome).toBe(matchup.impsAway);
     }
+  });
+});
+
+describe("teamMatchups", () => {
+  const teams: TeamId[] = ["A", "B", "C"];
+
+  it("puts the chosen team home in every matchup it played", () => {
+    for (const team of teams) {
+      const mine = teamMatchups(round.matchups, team);
+      // Three teams, so everyone meets both opponents in a round.
+      expect(mine).toHaveLength(2);
+      for (const matchup of mine) {
+        expect(matchup.teams[0]).toBe(team);
+        expect(matchup.teams[1]).not.toBe(team);
+      }
+    }
+  });
+
+  it("drops matchups the team was not in", () => {
+    expect(teamMatchups([ab], "C")).toEqual([]);
+    expect(teamMatchups([ab], "A")).toEqual([ab]);
+  });
+
+  it("is exactly the flip when the team is the away side", () => {
+    expect(teamMatchups([ab], "B")).toEqual([flipMatchup(ab)]);
+  });
+
+  it("leaves an already-oriented list alone, so re-orienting cannot drift", () => {
+    for (const team of teams) {
+      const mine = teamMatchups(round.matchups, team);
+      expect(teamMatchups(mine, team)).toEqual(mine);
+    }
+  });
+
+  it("agrees with the victory points the round stored", () => {
+    for (const team of teams) {
+      const mine = teamMatchups(round.matchups, team);
+      const vp = mine.reduce((sum, matchup) => sum + matchup.vpHome, 0);
+      expect(Math.round(vp * 100) / 100).toBe(round.teamVp[team]);
+
+      for (const matchup of mine) {
+        expect(matchup.vpHome + matchup.vpAway).toBe(20);
+        // Negating a drawn side must not leave -0 behind.
+        for (const value of [matchup.impsHome, matchup.impsAway, matchup.vpHome]) {
+          expect(Object.is(value, -0)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("names the team's own two pairs as the home pairs", () => {
+    // A sat A1 NS and A2 EW against B; told from B's side it is B2 and B1.
+    const [a] = teamMatchups([ab], "A");
+    expect([a.homeNsPair, a.homeEwPair]).toEqual(["A1", "A2"]);
+    const [b] = teamMatchups([ab], "B");
+    expect([b.homeNsPair, b.homeEwPair]).toEqual(["B2", "B1"]);
   });
 });

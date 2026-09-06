@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { GameMeta, TeamId } from "@/lib/types";
 
 export interface StandingRow {
@@ -7,7 +8,15 @@ export interface StandingRow {
   rounds: number;
 }
 
-export function Standings({ rows, meta }: { rows: StandingRow[]; meta: GameMeta }) {
+export function Standings({
+  rows,
+  meta,
+  gameId,
+}: {
+  rows: StandingRow[];
+  meta: GameMeta;
+  gameId: string;
+}) {
   const scored = rows.some((row) => row.rounds > 0);
 
   if (!scored) {
@@ -34,7 +43,8 @@ export function Standings({ rows, meta }: { rows: StandingRow[]; meta: GameMeta 
             <tr key={row.team}>
               <td>
                 <strong>
-                  {index + 1}. {row.name}
+                  {index + 1}.{" "}
+                  <Link href={`/g/${gameId}/team/${row.team}`}>{row.name}</Link>
                 </strong>
               </td>
               <td className="muted" style={{ textAlign: "left", whiteSpace: "normal" }}>

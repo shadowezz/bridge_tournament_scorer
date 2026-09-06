@@ -129,6 +129,7 @@ app/
   g/[gameId]/page.tsx               standings, round cards, AdminPanel
   g/[gameId]/round/[round]/page.tsx pair picker + SegmentForm
   g/[gameId]/results/[round]/       scoresheets + round VP
+  g/[gameId]/team/[teamId]/         one team's sheets, all rounds, its side
 lib/
   bridge/       contract.ts (parse "4HxN+1") score.ts imps.ts vp.ts
   tournament/   setup.ts matchups.ts validate.ts compute.ts perspective.ts
@@ -157,6 +158,17 @@ manual via `RefreshButton` (`router.refresh()`). Nothing polls.
   is a genuine end-to-end check — including POSTing a form's `$ACTION_ID_…` to
   exercise a server action with JS disabled.
 - `next dev` generates `AGENTS.md` / `CLAUDE.md` for agents when they are
-  absent, and `next build` removes the generated copies. It leaves *this* file
-  alone (verified). Set `agentRules: false` in `next.config.ts` to stop the
+  absent. It no longer leaves *this* file alone: it appends the `nextjs-agent-rules` block below and
+  re-appends it on every `next dev`, so deleting it only dirties the tree
+  again — commit it. Set `agentRules: false` in `next.config.ts` to stop the
   generation entirely.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

@@ -279,6 +279,23 @@ deliberately `import type`, which is erased at compile time.
 `flipMatchup` is its own inverse, which is the property the tests pin down:
 toggling back and forth can never drift.
 
+### One team, all rounds
+
+`teamMatchups(matchups, team)` orients a whole round the same way: it keeps the
+matchups a team played and flips the ones where it was stored as the away side,
+so afterwards `teams[0]`, `impsHome`, `vpHome` and the home pairs always belong
+to that team.
+
+That is the whole of `app/g/[gameId]/team/[teamId]/`, reached by clicking a team
+name in the standings. The per-round page offers the flip as a toggle; the team
+page makes the same choice once for every sheet, so a team can be read straight
+down. **It stores and computes nothing.** An ended round's stored result already
+holds both tables of every matchup, the grand total comes from the same
+`standings()` the front page calls, and the page performs no write — verified by
+hashing the game file either side of a load. A round an admin has not ended
+carries no result out of `visibleGame`, so it simply does not appear; nothing on
+this page needs a visibility rule of its own.
+
 ---
 
 ## Storage
