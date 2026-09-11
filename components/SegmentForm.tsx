@@ -207,7 +207,7 @@ export function SegmentForm(props: Props) {
                     name={`contract-${index}`}
                     value={claimedByOther ? "" : row.contract}
                     onChange={(event) => update(index, { contract: event.target.value })}
-                    placeholder="4HxN+1"
+                    placeholder="4HxN+1 or pass"
                     autoComplete="off"
                     autoCapitalize="characters"
                     spellCheck={false}
